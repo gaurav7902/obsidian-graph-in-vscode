@@ -85,6 +85,10 @@ main {
   overflow-y: auto;
 }
 
+#settings[hidden] {
+  display: none !important;
+}
+
 .settings-header {
   display: flex;
   justify-content: space-between;
@@ -145,6 +149,21 @@ input[type="range"] {
   padding: 8px;
   cursor: pointer;
   border-radius: 2px;
+}
+
+#animate {
+  align-self: flex-start;
+  background-color: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-foreground);
+  border: 1px solid var(--vscode-panel-border);
+  padding: 6px 14px;
+  cursor: pointer;
+  border-radius: 2px;
+  font-size: 12px;
+}
+
+#animate:hover {
+  filter: brightness(1.1);
 }
 
 .help {

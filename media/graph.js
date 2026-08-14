@@ -1,240 +1,488 @@
 const vscode = acquireVsCodeApi();
-const canvas = document.querySelector("#graph");
-const context = canvas.getContext("2d");
-const controls = Object.fromEntries(
-  [...document.querySelectorAll("input")].map((input) => [input.id, input]),
-);
-
-const defaults = {
-  existing: false,
-  orphans: true,
-  labels: true,
-  arrows: false,
-  nodeSize: 100,
-  linkWidth: 100,
-  centerForce: 28,
-  repelForce: 85,
-  linkForce: 45,
-  linkDistance: 100,
-};
-
-let nodes = [],
-  edges = [],
-  simulation,
-  zoomHandler,
-  hoverId = null,
-  viewport = { x: 0, y: 0, k: 1 },
-  dragStartX,
-  dragStartY;
+const host = document.querySelector("#graph");
+const controls = Object.fromEntries([...document.querySelectorAll("input")].map((input) => [input.id, input]));
+const defaults = { existing: false, orphans: true, arrows: false, labels: true, textFadeThreshold: 0, nodeSize: 100, linkWidth: 100, centerForce: 10, repelForce: 100, linkForce: 100, linkDistance: 100 };
+const FORCE_CONTROL_IDS = new Set(["centerForce", "repelForce", "linkForce", "linkDistance"]);
+let app;
+let container;
+let nodes = [];
+let edges = [];
+let simulation;
+let zoomHandler;
+let hoverId;
+let viewport = { x: 0, y: 0, k: 1 };
+let dragStart;
+let pendingGraph = null;
+let resizeObserver;
+let animationState = null;
+let animationFrame;
+const nodeShapes = new Map();
+const edgeShapes = new Map();
+const labels = new Map();
+const adjacency = new Map();
+const degrees = new Map();
 
 function option(name) {
   const control = controls[name];
   return control.type === "checkbox" ? control.checked : Number(control.value);
 }
 
-function resize() {
-  const ratio = devicePixelRatio || 1;
-  canvas.width = Math.floor(canvas.clientWidth * ratio);
-  canvas.height = Math.floor(canvas.clientHeight * ratio);
-  context.setTransform(ratio, 0, 0, ratio, 0, 0);
-  if (simulation) simulation.alpha(0.3).restart();
+function viewportSize() {
+  return { width: Math.max(1, host.clientWidth), height: Math.max(1, host.clientHeight) };
 }
 
-function getColor(folder) {
-  if (!folder) return "#7961e8";
+function color(folder) {
   let hash = 0;
-  for (let i = 0; i < folder.length; i++) {
-    hash = folder.charCodeAt(i) + ((hash << 5) - hash);
+  for (const char of folder || "") hash = char.charCodeAt(0) + ((hash << 5) - hash);
+  const hue = (Math.abs(hash) % 360) / 60;
+  const chroma = 0.56;
+  const secondary = chroma * (1 - Math.abs((hue % 2) - 1));
+  const match = 0.32;
+  const [red, green, blue] = hue < 1 ? [chroma, secondary, 0]
+    : hue < 2 ? [secondary, chroma, 0]
+    : hue < 3 ? [0, chroma, secondary]
+    : hue < 4 ? [0, secondary, chroma]
+    : hue < 5 ? [secondary, 0, chroma]
+    : [chroma, 0, secondary];
+  return (Math.round((red + match) * 255) << 16) |
+    (Math.round((green + match) * 255) << 8) |
+    Math.round((blue + match) * 255);
+}
+
+function nodeVisible(node) {
+  if (option("existing") && node.missing) return false;
+  if (!option("orphans") && !(degrees.get(node.id) > 0)) return false;
+  const query = controls.search.value.trim().toLowerCase();
+  return !query || node.label.toLowerCase().includes(query);
+}
+
+function edgeKey(edge) {
+  return `${edge.source.id}\u0000${edge.target.id}`;
+}
+
+function shape(map, id, make) {
+  if (!map.has(id)) {
+    const item = make();
+    map.set(id, item);
+    container.addChild(item);
   }
-  const h = Math.abs(hash) % 360;
-  return `hsl(${h}, 70%, 60%)`;
+  return map.get(id);
+}
+
+function removeStaleShapes(map, ids) {
+  for (const [id, item] of map) {
+    if (ids.has(id)) continue;
+    item.removeFromParent();
+    item.destroy();
+    map.delete(id);
+  }
+}
+
+function rebuildTopology() {
+  adjacency.clear();
+  degrees.clear();
+  for (const node of nodes) {
+    adjacency.set(node.id, new Set());
+    degrees.set(node.id, 0);
+  }
+  for (const edge of edges) {
+    if (!edge.source || !edge.target) continue;
+    adjacency.get(edge.source.id)?.add(edge.target.id);
+    adjacency.get(edge.target.id)?.add(edge.source.id);
+    degrees.set(edge.source.id, (degrees.get(edge.source.id) || 0) + 1);
+    degrees.set(edge.target.id, (degrees.get(edge.target.id) || 0) + 1);
+  }
+}
+
+function relatedNodes() {
+  if (!hoverId) return undefined;
+  return new Set([hoverId, ...(adjacency.get(hoverId) || [])]);
+}
+
+function nodeRadius(node) {
+  const degree = degrees.get(node.id) || 0;
+  return (5 + Math.min(12, Math.sqrt(degree) * 3)) * option("nodeSize") / 100;
+}
+
+function textFadeCutoff() {
+  return Math.max(0.05, 0.45 + option("textFadeThreshold") * 0.1);
+}
+
+function revealFactor(id) {
+  if (!animationState) return 1;
+  const revealAt = animationState.revealAt.get(id);
+  if (revealAt === undefined) return 1;
+  const elapsed = performance.now() - animationState.startTime - revealAt;
+  if (elapsed <= 0) return 0;
+  if (elapsed >= animationState.popDuration) return 1;
+  const t = elapsed / animationState.popDuration;
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function startAnimation() {
+  const order = nodes.filter(nodeVisible).map((node) => node.id);
+  if (!order.length) return;
+  if (animationFrame) cancelAnimationFrame(animationFrame);
+  const totalDuration = Math.min(4000, Math.max(500, order.length * 45));
+  const popDuration = 260;
+  const stagger = totalDuration / order.length;
+  const revealAt = new Map(order.map((id, index) => [id, index * stagger]));
+  animationState = { revealAt, startTime: performance.now(), popDuration, totalDuration };
+  const step = () => {
+    if (!animationState) return;
+    draw();
+    const elapsed = performance.now() - animationState.startTime;
+    if (elapsed < animationState.totalDuration + animationState.popDuration) {
+      animationFrame = requestAnimationFrame(step);
+    } else {
+      animationState = null;
+      animationFrame = undefined;
+      draw();
+    }
+  };
+  animationFrame = requestAnimationFrame(step);
 }
 
 function draw() {
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  context.clearRect(0, 0, width, height);
+  if (!app || !container) return;
+  const related = relatedNodes();
+  const edgeIds = new Set();
+  const nodeIds = new Set();
 
-  context.save();
-  context.translate(viewport.x, viewport.y);
-  context.scale(viewport.k, viewport.k);
-
-  const searchVal = controls.search.value.toLowerCase();
-  const related = hoverId ? new Set([hoverId, ...edges.filter(e => e.source.id === hoverId || e.target.id === hoverId).flatMap(e => [e.source.id, e.target.id])]) : null;
-
-  // Draw Edges
-  context.lineWidth = option("linkWidth") / 100;
-  context.strokeStyle = "#7c8b98";
-
-  edges.forEach(edge => {
-    const source = edge.source;
-    const target = edge.target;
-
-    const isVisible = (!option("existing") || (!source.missing && !target.missing)) &&
-                      (!controls.search.value || (source.label.toLowerCase().includes(searchVal) || target.label.toLowerCase().includes(searchVal)));
-
-    if (!isVisible) return;
-
-    context.globalAlpha = related ? (related.has(source.id) && related.has(target.id) ? 0.6 : 0.1) : 0.42;
-    context.beginPath();
-    context.moveTo(source.x, source.y);
-    context.lineTo(target.x, target.y);
-    context.stroke();
-  });
-
-  // Draw Nodes
-  nodes.forEach(node => {
-    const isVisible = (!option("existing") || !node.missing) &&
-                      (option("orphans") || (edges.some(e => e.source.id === node.id || e.target.id === node.id))) &&
-                      (!controls.search.value || node.label.toLowerCase().includes(searchVal));
-
-    if (!isVisible) return;
-
-    const active = related?.has(node.id);
-    const faded = related && !active;
-    const radius = ((5 + Math.min(12, Math.sqrt(edges.filter(e => e.source.id === node.id || e.target.id === node.id).length) * 3)) * option("nodeSize")) / 100;
-
-    context.globalAlpha = faded ? 0.12 : 1;
-    context.fillStyle = node.missing ? "#767676" : (active ? "#ffffff" : getColor(node.folder));
-    context.strokeStyle = active ? "#ffffff" : "#c8bdff";
-    context.lineWidth = active ? 2 : 1;
-
-    context.beginPath();
-    context.arc(node.x, node.y, radius, 0, Math.PI * 2);
-    context.fill();
-    context.stroke();
-
-    if (option("labels") && viewport.k > 0.45) {
-      context.fillStyle = getComputedStyle(document.body).color;
-      context.font = `${Math.max(10, 11 * viewport.k)}px var(--vscode-font-family)`;
-      context.fillText(node.label, node.x + radius + 4, node.y + 4);
+  for (const edge of edges) {
+    const id = edgeKey(edge);
+    edgeIds.add(id);
+    const graphic = shape(edgeShapes, id, () => new PIXI.Graphics());
+    const visible = nodeVisible(edge.source) && nodeVisible(edge.target);
+    const reveal = Math.min(revealFactor(edge.source.id), revealFactor(edge.target.id));
+    graphic.visible = visible && reveal > 0;
+    if (!visible || reveal <= 0) continue;
+    const active = !related || (related.has(edge.source.id) && related.has(edge.target.id));
+    const linkAlpha = (active ? 0.6 : 0.1) * reveal;
+    graphic.clear();
+    graphic.lineStyle(option("linkWidth") / 100, 0x7c8b98, linkAlpha);
+    graphic.moveTo(edge.source.x || 0, edge.source.y || 0);
+    graphic.lineTo(edge.target.x || 0, edge.target.y || 0);
+    if (option("arrows")) {
+      const sx = edge.source.x || 0, sy = edge.source.y || 0;
+      const tx = edge.target.x || 0, ty = edge.target.y || 0;
+      const dx = tx - sx, dy = ty - sy;
+      const dist = Math.hypot(dx, dy) || 1;
+      const ux = dx / dist, uy = dy / dist;
+      const gap = nodeRadius(edge.target) + 6;
+      const tipX = tx - ux * gap, tipY = ty - uy * gap;
+      const size = 4.5 * option("linkWidth") / 100 + 2.5;
+      graphic.beginFill(0x7c8b98, linkAlpha);
+      graphic.moveTo(tipX, tipY);
+      graphic.lineTo(tipX - ux * size - uy * size * 0.6, tipY - uy * size + ux * size * 0.6);
+      graphic.lineTo(tipX - ux * size + uy * size * 0.6, tipY - uy * size - ux * size * 0.6);
+      graphic.closePath();
+      graphic.endFill();
     }
-  });
+  }
 
-  context.restore();
-  context.globalAlpha = 1;
+  const fadeCutoff = textFadeCutoff();
+  for (const node of nodes) {
+    nodeIds.add(node.id);
+    const graphic = shape(nodeShapes, node.id, () => new PIXI.Graphics());
+    const label = shape(labels, node.id, () => new PIXI.Text(node.label, { fontFamily: "var(--vscode-font-family)", fontSize: 11, fill: 0xd0d0d0 }));
+    const visible = nodeVisible(node);
+    const reveal = revealFactor(node.id);
+    graphic.visible = visible && reveal > 0;
+    label.visible = false;
+    if (!visible || reveal <= 0) continue;
+    const radius = nodeRadius(node);
+    const active = !related || related.has(node.id);
+    const alpha = (related && !active ? 0.12 : 1) * reveal;
+    graphic.clear();
+    graphic.lineStyle(active ? 2 : 1, active ? 0xffffff : 0xc8bdff, alpha);
+    graphic.beginFill(node.missing ? 0x767676 : active ? 0xffffff : color(node.folder), alpha);
+    graphic.drawCircle(0, 0, radius);
+    graphic.endFill();
+    graphic.scale.set(reveal);
+    graphic.position.set(node.x || 0, node.y || 0);
+    label.visible = option("labels") && viewport.k > fadeCutoff && reveal >= 1;
+    label.alpha = alpha;
+    label.position.set((node.x || 0) + radius + 4, (node.y || 0) - 6);
+  }
+
+  removeStaleShapes(edgeShapes, edgeIds);
+  removeStaleShapes(nodeShapes, nodeIds);
+  removeStaleShapes(labels, nodeIds);
 }
 
-function initSimulation(graphData) {
-  if (simulation) simulation.stop();
+function graphPoint(event) {
+  const rect = app.view.getBoundingClientRect();
+  return { x: (event.clientX - rect.left - viewport.x) / viewport.k, y: (event.clientY - rect.top - viewport.y) / viewport.k };
+}
 
-  nodes = graphData.nodes.map(n => ({ ...n }));
-  edges = graphData.edges.map(e => ({ ...e }));
+function nodeAt(point) {
+  let closest;
+  let closestDistance = Infinity;
+  for (const node of nodes) {
+    if (!nodeVisible(node)) continue;
+    const radius = nodeRadius(node) + 8;
+    const distance = Math.hypot((node.x || 0) - point.x, (node.y || 0) - point.y);
+    if (distance <= radius && distance < closestDistance) {
+      closest = node;
+      closestDistance = distance;
+    }
+  }
+  return closest;
+}
 
-  const nodeById = new Map(nodes.map(n => [n.id, n]));
-  edges.forEach(e => {
-    e.source = nodeById.get(e.source);
-    e.target = nodeById.get(e.target);
-  });
+function distanceToSegment(point, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  if (dx === 0 && dy === 0) return Math.hypot(point.x - a.x, point.y - a.y);
+  const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / (dx * dx + dy * dy)));
+  const x = a.x + t * dx;
+  const y = a.y + t * dy;
+  return Math.hypot(point.x - x, point.y - y);
+}
 
-  simulation = d3.forceSimulation(nodes)
-    .force("link", d3.forceLink(edges).id(d => d.id).distance(option("linkDistance")))
-    .force("charge", d3.forceManyBody().strength(-option("repelForce") * 10))
-    .force("center", d3.forceCenter(canvas.clientWidth / 2, canvas.clientHeight / 2).strength(option("centerForce") / 100))
-    .force("collide", d3.forceCollide().radius(d => ((10 + Math.sqrt(edges.filter(e => e.source.id === d.id || e.target.id === d.id).length) * 3) * option("nodeSize")) / 100))
+function edgeAt(point) {
+  let closest;
+  let closestDistance = Infinity;
+  const tolerance = Math.max(7, 6 / viewport.k);
+  for (const edge of edges) {
+    if (!nodeVisible(edge.source) || !nodeVisible(edge.target)) continue;
+    const distance = distanceToSegment(point, { x: edge.source.x || 0, y: edge.source.y || 0 }, { x: edge.target.x || 0, y: edge.target.y || 0 });
+    if (distance <= tolerance && distance < closestDistance) {
+      closest = edge;
+      closestDistance = distance;
+    }
+  }
+  return closest;
+}
+
+function openGraphTarget(point) {
+  const node = nodeAt(point);
+  if (node) {
+    vscode.postMessage({ type: "openNote", id: node.id });
+    return true;
+  }
+  const edge = edgeAt(point);
+  if (edge) {
+    vscode.postMessage({ type: "openNote", id: edge.target.id });
+    return true;
+  }
+  return false;
+}
+
+function fitGraph(duration = 300) {
+  if (!app || !zoomHandler) return;
+  const visibleNodes = nodes.filter(nodeVisible);
+  const { width, height } = viewportSize();
+  if (!visibleNodes.length) {
+    d3.select(app.view).transition().duration(duration).call(zoomHandler.transform, d3.zoomIdentity);
+    return;
+  }
+  const padding = 60;
+  const xs = visibleNodes.map((node) => node.x || 0);
+  const ys = visibleNodes.map((node) => node.y || 0);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const graphWidth = Math.max(maxX - minX, 1);
+  const graphHeight = Math.max(maxY - minY, 1);
+  const scale = Math.max(0.2, Math.min(4, Math.min((width - padding * 2) / graphWidth, (height - padding * 2) / graphHeight)));
+  const x = width / 2 - ((minX + maxX) / 2) * scale;
+  const y = height / 2 - ((minY + maxY) / 2) * scale;
+  const transform = d3.zoomIdentity.translate(x, y).scale(scale);
+  d3.select(app.view).transition().duration(duration).call(zoomHandler.transform, transform);
+}
+
+function createSimulation() {
+  const { width, height } = viewportSize();
+  const linkForce = d3.forceLink(edges).id((node) => node.id).distance(option("linkDistance")).strength(option("linkForce") / 100);
+  return d3.forceSimulation(nodes)
+    .force("link", linkForce)
+    .force("charge", d3.forceManyBody().strength(-option("repelForce")))
+    // forceX/forceY (not forceCenter) give every node its own pull toward the
+    // shared center, proportional to how far it has drifted. forceCenter only
+    // recenters the *average* of all nodes as one translation, so separate
+    // components (or a dragged-away cluster) could drift apart forever
+    // without anything actually pulling them back together.
+    .force("x", d3.forceX(width / 2).strength(option("centerForce") / 100))
+    .force("y", d3.forceY(height / 2).strength(option("centerForce") / 100))
+    .force("collide", d3.forceCollide().radius((node) => 8 + Math.min(12, Math.sqrt(degrees.get(node.id) || 0) * 3) + 3).strength(0.8))
     .on("tick", draw);
+}
 
-  // Zoom setup
-  zoomHandler = d3.zoom()
-    .scaleExtent([0.2, 4])
-    .filter(event => {
-      const x = (event.offsetX - viewport.x) / viewport.k;
-      const y = (event.offsetY - viewport.y) / viewport.k;
-      return !nodes.find(n => Math.hypot(n.x - x, n.y - y) < 20);
-    })
-    .on("zoom", (event) => {
+function updateSimulationForces(restart = true) {
+  if (!simulation) return;
+  const { width, height } = viewportSize();
+  simulation.force("link").distance(option("linkDistance")).strength(option("linkForce") / 100);
+  simulation.force("charge").strength(-option("repelForce"));
+  simulation.force("x").x(width / 2).strength(option("centerForce") / 100);
+  simulation.force("y").y(height / 2).strength(option("centerForce") / 100);
+  if (restart) simulation.alpha(0.5).restart();
+}
+
+function initialise(graph) {
+  if (!app) { pendingGraph = graph; return; }
+  try {
+    simulation?.stop();
+    if (animationFrame) cancelAnimationFrame(animationFrame);
+    animationState = null;
+    hoverId = undefined;
+    viewport = { x: 0, y: 0, k: 1 };
+    nodes = (graph.nodes || []).map((node) => ({ ...node }));
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    edges = (graph.edges || []).map((edge) => ({ ...edge, source: byId.get(edge.source), target: byId.get(edge.target) })).filter((edge) => edge.source && edge.target);
+    rebuildTopology();
+    simulation = createSimulation();
+    zoomHandler = d3.zoom().scaleExtent([0.2, 4]).on("zoom", (event) => {
       viewport = event.transform;
+      container.position.set(viewport.x, viewport.y);
+      container.scale.set(viewport.k);
       draw();
     });
 
-  d3.select(canvas).call(zoomHandler);
+    const selection = d3.select(app.view);
+    // Bind drag BEFORE zoom. d3-drag calls stopImmediatePropagation() on
+    // mousedown when it finds a valid subject (a node), which only prevents
+    // other listeners on the same element from firing if those listeners
+    // are registered *after* drag's. Binding zoom first meant its pan
+    // handler always ran before drag could claim the event, so grabbing a
+    // node just panned the canvas instead of dragging the node.
+    selection.on(".drag", null).call(d3.drag()
+      .container(app.view)
+      .subject((event) => nodeAt({ x: (event.x - viewport.x) / viewport.k, y: (event.y - viewport.y) / viewport.k }))
+      .on("start", (event) => {
+        if (!event.subject) return;
+        dragStart = { x: event.x, y: event.y };
+        simulation.alphaTarget(0.25).restart();
+        event.subject.fx = event.subject.x;
+        event.subject.fy = event.subject.y;
+      })
+      .on("drag", (event) => {
+        if (!event.subject) return;
+        event.subject.fx = (event.x - viewport.x) / viewport.k;
+        event.subject.fy = (event.y - viewport.y) / viewport.k;
+      })
+      .on("end", (event) => {
+        if (!event.subject) return;
+        simulation.alphaTarget(0);
+        event.subject.fx = null;
+        event.subject.fy = null;
+        dragStart = undefined;
+      }));
+    selection.on(".zoom", null).call(zoomHandler);
 
-  // Drag setup
-  d3.select(canvas).call(d3.drag()
-    .container(canvas)
-    .subject(event => {
-      const x = (event.x - viewport.x) / viewport.k;
-      const y = (event.y - viewport.y) / viewport.k;
-      return nodes.find(n => Math.hypot(n.x - x, n.y - y) < 20);
-    })
-    .on("start", event => {
-      dragStartX = event.x;
-      dragStartY = event.y;
-      if (!event.active) simulation.alphaTarget(0.3).restart();
-      event.subject.fx = event.subject.x;
-      event.subject.fy = event.subject.y;
-    })
-    .on("drag", event => {
-      event.subject.fx = (event.x - viewport.x) / viewport.k;
-      event.subject.fy = (event.y - viewport.y) / viewport.k;
-    })
-    .on("end", event => {
-      if (!event.active) simulation.alphaTarget(0);
-      event.subject.fx = null;
-      event.subject.fy = null;
-      // If not moved much, open note
-      const dx = event.x - dragStartX;
-      const dy = event.y - dragStartY;
-      if (Math.abs(dx) < 2 && Math.abs(dy) < 2) {
-        vscode.postMessage({ type: "openNote", id: event.subject.id });
-      }
-    }));
+    draw();
+  } catch (error) {
+    vscode.postMessage({ type: "error", message: error instanceof Error ? error.message : String(error) });
+  }
 }
 
-canvas.addEventListener("pointermove", (event) => {
-  const x = (event.offsetX - viewport.x) / viewport.k;
-  const y = (event.offsetY - viewport.y) / viewport.k;
-  const node = nodes.find(n => Math.hypot(n.x - x, n.y - y) < 20);
+async function setup() {
+  try {
+    app = new PIXI.Application({ resizeTo: host, backgroundAlpha: 0, antialias: true, resolution: window.devicePixelRatio || 1, autoDensity: true });
+    host.replaceChildren(app.view);
+    container = new PIXI.Container();
+    app.stage.addChild(container);
 
-  if (node?.id !== hoverId) {
-    hoverId = node?.id;
-    draw();
+    resizeObserver = new ResizeObserver(() => {
+      if (!simulation) return;
+      updateSimulationForces(false);
+      simulation.alpha(0.15).restart();
+      draw();
+    });
+    resizeObserver.observe(host);
+
+    let pointerDown;
+    app.view.addEventListener("pointerdown", (event) => {
+      const point = graphPoint(event);
+      pointerDown = { x: event.clientX, y: event.clientY, point };
+    });
+    app.view.addEventListener("pointerup", (event) => {
+      if (!pointerDown) return;
+      const moved = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y);
+      const point = graphPoint(event);
+      pointerDown = undefined;
+      if (moved <= 5) openGraphTarget(point);
+    });
+    app.view.addEventListener("pointermove", (event) => {
+      const node = nodeAt(graphPoint(event));
+      if (node?.id !== hoverId) {
+        hoverId = node?.id;
+        draw();
+      }
+    });
+    app.view.addEventListener("pointerleave", () => {
+      pointerDown = undefined;
+      if (hoverId !== undefined) {
+        hoverId = undefined;
+        draw();
+      }
+    });
+
+    vscode.postMessage({ type: "ready" });
+    if (pendingGraph) {
+      const nextGraph = pendingGraph;
+      pendingGraph = null;
+      initialise(nextGraph);
+      document.querySelector("#emptyState").hidden = true;
+      document.querySelector("#status").textContent = `Vault selected: ${nextGraph.vaultPath || ""} · ${nextGraph.nodes.length} notes · ${nextGraph.edges.length} links`;
+    }
+  } catch (error) {
+    vscode.postMessage({ type: "error", message: error instanceof Error ? error.message : String(error) });
   }
-});
+}
 
 document.querySelector("#chooseVault").onclick = () => vscode.postMessage({ type: "chooseVault" });
 document.querySelector("#refresh").onclick = () => vscode.postMessage({ type: "refresh" });
-document.querySelector("#fit").onclick = () => {
-  d3.select(canvas).transition().duration(750).call(zoomHandler.transform, d3.zoomIdentity);
-};
+document.querySelector("#fit").onclick = () => fitGraph();
 document.querySelector("#settingsButton").onclick = () => {
   const settings = document.querySelector("#settings");
   settings.hidden = !settings.hidden;
-  document.querySelector("#settingsButton").setAttribute("aria-expanded", String(!settings.hidden));
 };
-document.querySelector("#closeSettings").onclick = () => {
-  document.querySelector("#settings").hidden = true;
-  document.querySelector("#settingsButton").setAttribute("aria-expanded", "false");
-};
+document.querySelector("#closeSettings").onclick = () => { document.querySelector("#settings").hidden = true; };
 
-for (const control of Object.values(controls)) {
+for (const [id, control] of Object.entries(controls)) {
   control.addEventListener("input", () => {
-    if (simulation) {
-      simulation.force("link").distance(option("linkDistance"));
-      simulation.force("charge").strength(-option("repelForce") * 10);
-      simulation.force("center").strength(option("centerForce") / 100);
-      simulation.alpha(0.3).restart();
-    }
+    if (FORCE_CONTROL_IDS.has(id)) updateSimulationForces();
     draw();
   });
 }
 
+document.querySelector("#animate").onclick = () => startAnimation();
+
 document.querySelector("#reset").onclick = () => {
-  for (const [key, value] of Object.entries(defaults)) {
-    controls[key].checked = typeof value === "boolean" ? value : (controls[key].value = value);
+  for (const [name, value] of Object.entries(defaults)) {
+    if (typeof value === "boolean") controls[name].checked = value;
+    else controls[name].value = value;
   }
-  if (simulation) simulation.alpha(0.3).restart();
+  updateSimulationForces();
   draw();
 };
 
-addEventListener("resize", resize);
 addEventListener("message", (event) => {
+  if (event.data.type === "vaultStatus") {
+    document.querySelector("#status").textContent = `Vault selected: ${event.data.vaultPath}`;
+    document.querySelector("#emptyState").textContent = "Loading graph...";
+    document.querySelector("#emptyState").hidden = false;
+    return;
+  }
   if (event.data.type !== "graph") return;
-  initSimulation(event.data.graph);
+  if (!app) {
+    pendingGraph = event.data.graph;
+    document.querySelector("#emptyState").textContent = "Initializing graph renderer...";
+    return;
+  }
+  initialise(event.data.graph);
   document.querySelector("#emptyState").hidden = true;
-  document.querySelector("#status").textContent =
-    `${event.data.graph.nodes.length} notes · ${event.data.graph.edges.length} links · ${event.data.vault}`;
+  document.querySelector("#status").textContent = `Vault selected: ${event.data.vaultPath} · ${event.data.graph.nodes.length} notes · ${event.data.graph.edges.length} links`;
 });
 
-resize();
-vscode.postMessage({ type: "ready" });
+addEventListener("beforeunload", () => {
+  simulation?.stop();
+  if (animationFrame) cancelAnimationFrame(animationFrame);
+  resizeObserver?.disconnect();
+  app?.destroy(true);
+});
+
+setup();
