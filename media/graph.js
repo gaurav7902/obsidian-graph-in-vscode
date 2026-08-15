@@ -1,19 +1,45 @@
 const vscode = acquireVsCodeApi();
 const host = document.querySelector("#graph");
-const controls = Object.fromEntries([...document.querySelectorAll("input")].map((input) => [input.id, input]));
-const rangeValueOutputs = Object.fromEntries([...document.querySelectorAll(".range-value")].map((output) => [output.getAttribute("for"), output]));
-const defaults = { existing: false, orphans: true, arrows: false, labels: true, textFadeThreshold: 0, nodeSize: 50, linkWidth: 50, centerForce: 8, repelForce: 100, linkForce: 30, linkDistance: 300, velocityDecay: 0.4 };
-const FORCE_CONTROL_IDS = new Set(["centerForce", "repelForce", "linkForce", "linkDistance", "velocityDecay"]);
+const controls = Object.fromEntries(
+    [...document.querySelectorAll("input")].map((input) => [input.id, input]),
+);
+const rangeValueOutputs = Object.fromEntries(
+    [...document.querySelectorAll(".range-value")].map((output) => [
+        output.getAttribute("for"),
+        output,
+    ]),
+);
+const defaults = {
+    existing: false,
+    orphans: true,
+    arrows: false,
+    labels: true,
+    textFadeThreshold: 0,
+    nodeSize: 50,
+    linkWidth: 50,
+    centerForce: 8,
+    repelForce: 100,
+    linkForce: 30,
+    linkDistance: 300,
+    velocityDecay: 0.4,
+};
+const FORCE_CONTROL_IDS = new Set([
+    "centerForce",
+    "repelForce",
+    "linkForce",
+    "linkDistance",
+    "velocityDecay",
+]);
 
 function syncRangeValue(id) {
-  const output = rangeValueOutputs[id];
-  const control = controls[id];
-  if (!output || !control) return;
-  output.textContent = control.value;
+    const output = rangeValueOutputs[id];
+    const control = controls[id];
+    if (!output || !control) return;
+    output.textContent = control.value;
 }
 
 function syncAllRangeValues() {
-  for (const id of Object.keys(rangeValueOutputs)) syncRangeValue(id);
+    for (const id of Object.keys(rangeValueOutputs)) syncRangeValue(id);
 }
 let app;
 let container;
@@ -22,7 +48,7 @@ let edges = [];
 let simulation;
 let zoomHandler;
 let hoverId;
-let viewport = { x: 0, y: 0, k: 1 };
+let viewport = {x: 0, y: 0, k: 1};
 let dragStart;
 let pendingGraph = null;
 let resizeObserver;
@@ -35,85 +61,101 @@ const adjacency = new Map();
 const degrees = new Map();
 
 function option(name) {
-  const control = controls[name];
-  return control.type === "checkbox" ? control.checked : Number(control.value);
+    const control = controls[name];
+    return control.type === "checkbox"
+        ? control.checked
+        : Number(control.value);
 }
 
 function viewportSize() {
-  return { width: Math.max(1, host.clientWidth), height: Math.max(1, host.clientHeight) };
+    return {
+        width: Math.max(1, host.clientWidth),
+        height: Math.max(1, host.clientHeight),
+    };
 }
 
 function color(folder) {
-  let hash = 0;
-  for (const char of folder || "") hash = char.charCodeAt(0) + ((hash << 5) - hash);
-  const hue = (Math.abs(hash) % 360) / 60;
-  const chroma = 0.56;
-  const secondary = chroma * (1 - Math.abs((hue % 2) - 1));
-  const match = 0.32;
-  const [red, green, blue] = hue < 1 ? [chroma, secondary, 0]
-    : hue < 2 ? [secondary, chroma, 0]
-    : hue < 3 ? [0, chroma, secondary]
-    : hue < 4 ? [0, secondary, chroma]
-    : hue < 5 ? [secondary, 0, chroma]
-    : [chroma, 0, secondary];
-  return (Math.round((red + match) * 255) << 16) |
-    (Math.round((green + match) * 255) << 8) |
-    Math.round((blue + match) * 255);
+    let hash = 0;
+    for (const char of folder || "")
+        hash = char.charCodeAt(0) + ((hash << 5) - hash);
+    const hue = (Math.abs(hash) % 360) / 60;
+    const chroma = 0.56;
+    const secondary = chroma * (1 - Math.abs((hue % 2) - 1));
+    const match = 0.32;
+    const [red, green, blue] =
+        hue < 1
+            ? [chroma, secondary, 0]
+            : hue < 2
+              ? [secondary, chroma, 0]
+              : hue < 3
+                ? [0, chroma, secondary]
+                : hue < 4
+                  ? [0, secondary, chroma]
+                  : hue < 5
+                    ? [secondary, 0, chroma]
+                    : [chroma, 0, secondary];
+    return (
+        (Math.round((red + match) * 255) << 16) |
+        (Math.round((green + match) * 255) << 8) |
+        Math.round((blue + match) * 255)
+    );
 }
 
 function nodeVisible(node) {
-  if (option("existing") && node.missing) return false;
-  if (!option("orphans") && !(degrees.get(node.id) > 0)) return false;
-  const query = controls.search.value.trim().toLowerCase();
-  return !query || node.label.toLowerCase().includes(query);
+    if (option("existing") && node.missing) return false;
+    if (!option("orphans") && !(degrees.get(node.id) > 0)) return false;
+    const query = controls.search.value.trim().toLowerCase();
+    return !query || node.label.toLowerCase().includes(query);
 }
 
 function edgeKey(edge) {
-  return `${edge.source.id}\u0000${edge.target.id}`;
+    return `${edge.source.id}\u0000${edge.target.id}`;
 }
 
 function shape(map, id, make) {
-  if (!map.has(id)) {
-    const item = make();
-    map.set(id, item);
-    container.addChild(item);
-  }
-  return map.get(id);
+    if (!map.has(id)) {
+        const item = make();
+        map.set(id, item);
+        container.addChild(item);
+    }
+    return map.get(id);
 }
 
 function removeStaleShapes(map, ids) {
-  for (const [id, item] of map) {
-    if (ids.has(id)) continue;
-    item.removeFromParent();
-    item.destroy();
-    map.delete(id);
-  }
+    for (const [id, item] of map) {
+        if (ids.has(id)) continue;
+        item.removeFromParent();
+        item.destroy();
+        map.delete(id);
+    }
 }
 
 function rebuildTopology() {
-  adjacency.clear();
-  degrees.clear();
-  for (const node of nodes) {
-    adjacency.set(node.id, new Set());
-    degrees.set(node.id, 0);
-  }
-  for (const edge of edges) {
-    if (!edge.source || !edge.target) continue;
-    adjacency.get(edge.source.id)?.add(edge.target.id);
-    adjacency.get(edge.target.id)?.add(edge.source.id);
-    degrees.set(edge.source.id, (degrees.get(edge.source.id) || 0) + 1);
-    degrees.set(edge.target.id, (degrees.get(edge.target.id) || 0) + 1);
-  }
+    adjacency.clear();
+    degrees.clear();
+    for (const node of nodes) {
+        adjacency.set(node.id, new Set());
+        degrees.set(node.id, 0);
+    }
+    for (const edge of edges) {
+        if (!edge.source || !edge.target) continue;
+        adjacency.get(edge.source.id)?.add(edge.target.id);
+        adjacency.get(edge.target.id)?.add(edge.source.id);
+        degrees.set(edge.source.id, (degrees.get(edge.source.id) || 0) + 1);
+        degrees.set(edge.target.id, (degrees.get(edge.target.id) || 0) + 1);
+    }
 }
 
 function relatedNodes() {
-  if (!hoverId) return undefined;
-  return new Set([hoverId, ...(adjacency.get(hoverId) || [])]);
+    if (!hoverId) return undefined;
+    return new Set([hoverId, ...(adjacency.get(hoverId) || [])]);
 }
 
 function nodeRadius(node) {
-  const degree = degrees.get(node.id) || 0;
-  return (5 + Math.min(12, Math.sqrt(degree) * 3)) * option("nodeSize") / 100;
+    const degree = degrees.get(node.id) || 0;
+    return (
+        ((5 + Math.min(12, Math.sqrt(degree) * 3)) * option("nodeSize")) / 100
+    );
 }
 
 // Real Obsidian scales how hard a note pushes its neighbours away by how
@@ -123,25 +165,25 @@ function nodeRadius(node) {
 // degree) is what makes a force graph feel generic; this factor is what
 // makes it feel like Obsidian's own graph view.
 function chargeScale(node) {
-  const degree = degrees.get(node.id) || 0;
-  return Math.sqrt(1 + degree * 0.5);
+    const degree = degrees.get(node.id) || 0;
+    return Math.sqrt(1 + degree * 0.5);
 }
 
 function textFadeCutoff() {
-  return Math.max(0.05, 0.45 + option("textFadeThreshold") * 0.1);
+    return Math.max(0.05, 0.45 + option("textFadeThreshold") * 0.1);
 }
 
 function revealFactor(id) {
-  if (!animationState) return 1;
-  const revealAt = animationState.revealAt.get(id);
-  if (revealAt === undefined) return 1;
-  const elapsed = performance.now() - animationState.startTime - revealAt;
-  if (elapsed <= 0) return 0;
-  if (elapsed >= animationState.popDuration) return 1;
-  const t = elapsed / animationState.popDuration;
-  // Gentle ease-out-quint: starts quick, settles in slowly instead of
-  // snapping to full size, so each node "blooms" rather than pops.
-  return 1 - Math.pow(1 - t, 5);
+    if (!animationState) return 1;
+    const revealAt = animationState.revealAt.get(id);
+    if (revealAt === undefined) return 1;
+    const elapsed = performance.now() - animationState.startTime - revealAt;
+    if (elapsed <= 0) return 0;
+    if (elapsed >= animationState.popDuration) return 1;
+    const t = elapsed / animationState.popDuration;
+    // Gentle ease-out-quint: starts quick, settles in slowly instead of
+    // snapping to full size, so each node "blooms" rather than pops.
+    return 1 - Math.pow(1 - t, 5);
 }
 
 // Builds a breadth-first reveal order starting from the best-connected
@@ -149,386 +191,545 @@ function revealFactor(id) {
 // first, then its direct links, then the next ring of links out from
 // those, and so on - instead of nodes appearing in arbitrary/list order.
 function computeRevealWaves(order) {
-  const visibleSet = new Set(order);
-  let root = order[0];
-  let bestDegree = -1;
-  for (const id of order) {
-    const degree = degrees.get(id) || 0;
-    if (degree > bestDegree) {
-      bestDegree = degree;
-      root = id;
+    const visibleSet = new Set(order);
+    let root = order[0];
+    let bestDegree = -1;
+    for (const id of order) {
+        const degree = degrees.get(id) || 0;
+        if (degree > bestDegree) {
+            bestDegree = degree;
+            root = id;
+        }
     }
-  }
 
-  const visited = new Set([root]);
-  const waves = [[root]];
-  let frontier = [root];
-  while (frontier.length) {
-    const next = [];
-    for (const id of frontier) {
-      for (const neighbor of adjacency.get(id) || []) {
-        if (!visibleSet.has(neighbor) || visited.has(neighbor)) continue;
-        visited.add(neighbor);
-        next.push(neighbor);
-      }
+    const visited = new Set([root]);
+    const waves = [[root]];
+    let frontier = [root];
+    while (frontier.length) {
+        const next = [];
+        for (const id of frontier) {
+            for (const neighbor of adjacency.get(id) || []) {
+                if (!visibleSet.has(neighbor) || visited.has(neighbor))
+                    continue;
+                visited.add(neighbor);
+                next.push(neighbor);
+            }
+        }
+        if (next.length) waves.push(next);
+        frontier = next;
     }
-    if (next.length) waves.push(next);
-    frontier = next;
-  }
 
-  // Anything not reached from the root (separate components/orphans)
-  // still needs to appear - trickle those in as trailing waves rather
-  // than dumping them all in at once.
-  const remaining = order.filter((id) => !visited.has(id));
-  const chunkSize = Math.max(1, Math.ceil(remaining.length / Math.max(1, waves.length)));
-  for (let i = 0; i < remaining.length; i += chunkSize) {
-    waves.push(remaining.slice(i, i + chunkSize));
-  }
-  return waves;
+    // Anything not reached from the root (separate components/orphans)
+    // still needs to appear - trickle those in as trailing waves rather
+    // than dumping them all in at once.
+    const remaining = order.filter((id) => !visited.has(id));
+    const chunkSize = Math.max(
+        1,
+        Math.ceil(remaining.length / Math.max(1, waves.length)),
+    );
+    for (let i = 0; i < remaining.length; i += chunkSize) {
+        waves.push(remaining.slice(i, i + chunkSize));
+    }
+    return waves;
 }
 
 function startAnimation() {
-  const order = nodes.filter(nodeVisible).map((node) => node.id);
-  if (!order.length) return;
-  if (animationFrame) cancelAnimationFrame(animationFrame);
+    const order = nodes.filter(nodeVisible).map((node) => node.id);
+    if (!order.length) return;
+    if (animationFrame) cancelAnimationFrame(animationFrame);
 
-  const waves = computeRevealWaves(order);
-  const popDuration = 640;       // how long a single node takes to bloom in
-  const waveGap = 320;           // pause before the next ring starts appearing
-  const withinWaveStagger = 90;  // nodes in the same ring still trickle in, not pop together
+    const waves = computeRevealWaves(order);
+    const popDuration = 640; // how long a single node takes to bloom in
+    const waveGap = 320; // pause before the next ring starts appearing
+    const withinWaveStagger = 90; // nodes in the same ring still trickle in, not pop together
 
-  const revealAt = new Map();
-  let cursor = 0;
-  for (const wave of waves) {
-    wave.forEach((id, index) => revealAt.set(id, cursor + index * withinWaveStagger));
-    cursor += waveGap + (wave.length - 1) * withinWaveStagger;
-  }
-  const totalDuration = cursor;
-
-  animationState = { revealAt, startTime: performance.now(), popDuration, totalDuration };
-  const step = () => {
-    if (!animationState) return;
-    draw();
-    const elapsed = performance.now() - animationState.startTime;
-    if (elapsed < animationState.totalDuration + animationState.popDuration) {
-      animationFrame = requestAnimationFrame(step);
-    } else {
-      animationState = null;
-      animationFrame = undefined;
-      draw();
+    const revealAt = new Map();
+    let cursor = 0;
+    for (const wave of waves) {
+        wave.forEach((id, index) =>
+            revealAt.set(id, cursor + index * withinWaveStagger),
+        );
+        cursor += waveGap + (wave.length - 1) * withinWaveStagger;
     }
-  };
-  animationFrame = requestAnimationFrame(step);
+    const totalDuration = cursor;
+
+    animationState = {
+        revealAt,
+        startTime: performance.now(),
+        popDuration,
+        totalDuration,
+    };
+    const step = () => {
+        if (!animationState) return;
+        draw();
+        const elapsed = performance.now() - animationState.startTime;
+        if (
+            elapsed <
+            animationState.totalDuration + animationState.popDuration
+        ) {
+            animationFrame = requestAnimationFrame(step);
+        } else {
+            animationState = null;
+            animationFrame = undefined;
+            draw();
+        }
+    };
+    animationFrame = requestAnimationFrame(step);
 }
 
 function draw() {
-  if (!app || !container) return;
-  const related = relatedNodes();
-  const edgeIds = new Set();
-  const nodeIds = new Set();
+    if (!app || !container) return;
+    const related = relatedNodes();
+    const edgeIds = new Set();
+    const nodeIds = new Set();
 
-  for (const edge of edges) {
-    const id = edgeKey(edge);
-    edgeIds.add(id);
-    const graphic = shape(edgeShapes, id, () => new PIXI.Graphics());
-    const visible = nodeVisible(edge.source) && nodeVisible(edge.target);
-    const reveal = Math.min(revealFactor(edge.source.id), revealFactor(edge.target.id));
-    graphic.visible = visible && reveal > 0;
-    if (!visible || reveal <= 0) continue;
-    const active = !related || (related.has(edge.source.id) && related.has(edge.target.id));
-    const linkAlpha = (active ? 0.6 : 0.1) * reveal;
-    graphic.clear();
-    graphic.lineStyle(option("linkWidth") / 100, 0x7c8b98, linkAlpha);
-    graphic.moveTo(edge.source.x || 0, edge.source.y || 0);
-    graphic.lineTo(edge.target.x || 0, edge.target.y || 0);
-    if (option("arrows")) {
-      const sx = edge.source.x || 0, sy = edge.source.y || 0;
-      const tx = edge.target.x || 0, ty = edge.target.y || 0;
-      const dx = tx - sx, dy = ty - sy;
-      const dist = Math.hypot(dx, dy) || 1;
-      const ux = dx / dist, uy = dy / dist;
-      const gap = nodeRadius(edge.target) + 6;
-      const tipX = tx - ux * gap, tipY = ty - uy * gap;
-      const size = 4.5 * option("linkWidth") / 100 + 2.5;
-      graphic.beginFill(0x7c8b98, linkAlpha);
-      graphic.moveTo(tipX, tipY);
-      graphic.lineTo(tipX - ux * size - uy * size * 0.6, tipY - uy * size + ux * size * 0.6);
-      graphic.lineTo(tipX - ux * size + uy * size * 0.6, tipY - uy * size - ux * size * 0.6);
-      graphic.closePath();
-      graphic.endFill();
+    for (const edge of edges) {
+        const id = edgeKey(edge);
+        edgeIds.add(id);
+        const graphic = shape(edgeShapes, id, () => new PIXI.Graphics());
+        const visible = nodeVisible(edge.source) && nodeVisible(edge.target);
+        const reveal = Math.min(
+            revealFactor(edge.source.id),
+            revealFactor(edge.target.id),
+        );
+        graphic.visible = visible && reveal > 0;
+        if (!visible || reveal <= 0) continue;
+        const active =
+            !related ||
+            (related.has(edge.source.id) && related.has(edge.target.id));
+        const linkAlpha = (active ? 0.6 : 0.1) * reveal;
+        graphic.clear();
+        graphic.lineStyle(option("linkWidth") / 100, 0x7c8b98, linkAlpha);
+        graphic.moveTo(edge.source.x || 0, edge.source.y || 0);
+        graphic.lineTo(edge.target.x || 0, edge.target.y || 0);
+        if (option("arrows")) {
+            const sx = edge.source.x || 0,
+                sy = edge.source.y || 0;
+            const tx = edge.target.x || 0,
+                ty = edge.target.y || 0;
+            const dx = tx - sx,
+                dy = ty - sy;
+            const dist = Math.hypot(dx, dy) || 1;
+            const ux = dx / dist,
+                uy = dy / dist;
+            const gap = nodeRadius(edge.target) + 6;
+            const tipX = tx - ux * gap,
+                tipY = ty - uy * gap;
+            const size = (4.5 * option("linkWidth")) / 100 + 2.5;
+            graphic.beginFill(0x7c8b98, linkAlpha);
+            graphic.moveTo(tipX, tipY);
+            graphic.lineTo(
+                tipX - ux * size - uy * size * 0.6,
+                tipY - uy * size + ux * size * 0.6,
+            );
+            graphic.lineTo(
+                tipX - ux * size + uy * size * 0.6,
+                tipY - uy * size - ux * size * 0.6,
+            );
+            graphic.closePath();
+            graphic.endFill();
+        }
     }
-  }
 
-  const fadeCutoff = textFadeCutoff();
-  for (const node of nodes) {
-    nodeIds.add(node.id);
-    const graphic = shape(nodeShapes, node.id, () => new PIXI.Graphics());
-    const label = shape(labels, node.id, () => new PIXI.Text(node.label, { fontFamily: "var(--vscode-font-family)", fontSize: 11, fill: 0xd0d0d0 }));
-    const visible = nodeVisible(node);
-    const reveal = revealFactor(node.id);
-    graphic.visible = visible && reveal > 0;
-    label.visible = false;
-    if (!visible || reveal <= 0) continue;
-    const radius = nodeRadius(node);
-    const active = !related || related.has(node.id);
-    const alpha = (related && !active ? 0.12 : 1) * reveal;
-    graphic.clear();
-    graphic.lineStyle(active ? 2 : 1, active ? 0xffffff : 0xc8bdff, alpha);
-    graphic.beginFill(node.missing ? 0x767676 : active ? 0xffffff : color(node.folder), alpha);
-    graphic.drawCircle(0, 0, radius);
-    graphic.endFill();
-    graphic.scale.set(reveal);
-    graphic.position.set(node.x || 0, node.y || 0);
-    label.visible = option("labels") && viewport.k > fadeCutoff && reveal >= 1;
-    label.alpha = alpha;
-    label.position.set((node.x || 0) + radius + 4, (node.y || 0) - 6);
-  }
+    const fadeCutoff = textFadeCutoff();
+    for (const node of nodes) {
+        nodeIds.add(node.id);
+        const graphic = shape(nodeShapes, node.id, () => new PIXI.Graphics());
+        const label = shape(
+            labels,
+            node.id,
+            () =>
+                new PIXI.Text(node.label, {
+                    fontFamily: "var(--vscode-font-family)",
+                    fontSize: 11,
+                    fill: 0xd0d0d0,
+                }),
+        );
+        const visible = nodeVisible(node);
+        const reveal = revealFactor(node.id);
+        graphic.visible = visible && reveal > 0;
+        label.visible = false;
+        if (!visible || reveal <= 0) continue;
+        const radius = nodeRadius(node);
+        const active = !related || related.has(node.id);
+        const alpha = (related && !active ? 0.12 : 1) * reveal;
+        graphic.clear();
+        graphic.lineStyle(active ? 2 : 1, active ? 0xffffff : 0xc8bdff, alpha);
+        graphic.beginFill(
+            node.missing ? 0x767676 : active ? 0xffffff : color(node.folder),
+            alpha,
+        );
+        graphic.drawCircle(0, 0, radius);
+        graphic.endFill();
+        graphic.scale.set(reveal);
+        graphic.position.set(node.x || 0, node.y || 0);
+        label.visible =
+            option("labels") && viewport.k > fadeCutoff && reveal >= 1;
+        label.alpha = alpha;
+        label.position.set((node.x || 0) + radius + 4, (node.y || 0) - 6);
+    }
 
-  removeStaleShapes(edgeShapes, edgeIds);
-  removeStaleShapes(nodeShapes, nodeIds);
-  removeStaleShapes(labels, nodeIds);
+    removeStaleShapes(edgeShapes, edgeIds);
+    removeStaleShapes(nodeShapes, nodeIds);
+    removeStaleShapes(labels, nodeIds);
 }
 
 function graphPoint(event) {
-  const rect = app.view.getBoundingClientRect();
-  return { x: (event.clientX - rect.left - viewport.x) / viewport.k, y: (event.clientY - rect.top - viewport.y) / viewport.k };
+    const rect = app.view.getBoundingClientRect();
+    return {
+        x: (event.clientX - rect.left - viewport.x) / viewport.k,
+        y: (event.clientY - rect.top - viewport.y) / viewport.k,
+    };
 }
 
 function nodeAt(point) {
-  let closest;
-  let closestDistance = Infinity;
-  for (const node of nodes) {
-    if (!nodeVisible(node)) continue;
-    const radius = nodeRadius(node) + 8;
-    const distance = Math.hypot((node.x || 0) - point.x, (node.y || 0) - point.y);
-    if (distance <= radius && distance < closestDistance) {
-      closest = node;
-      closestDistance = distance;
+    let closest;
+    let closestDistance = Infinity;
+    for (const node of nodes) {
+        if (!nodeVisible(node)) continue;
+        const radius = nodeRadius(node) + 8;
+        const distance = Math.hypot(
+            (node.x || 0) - point.x,
+            (node.y || 0) - point.y,
+        );
+        if (distance <= radius && distance < closestDistance) {
+            closest = node;
+            closestDistance = distance;
+        }
     }
-  }
-  return closest;
+    return closest;
 }
 
 function distanceToSegment(point, a, b) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  if (dx === 0 && dy === 0) return Math.hypot(point.x - a.x, point.y - a.y);
-  const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / (dx * dx + dy * dy)));
-  const x = a.x + t * dx;
-  const y = a.y + t * dy;
-  return Math.hypot(point.x - x, point.y - y);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    if (dx === 0 && dy === 0) return Math.hypot(point.x - a.x, point.y - a.y);
+    const t = Math.max(
+        0,
+        Math.min(
+            1,
+            ((point.x - a.x) * dx + (point.y - a.y) * dy) / (dx * dx + dy * dy),
+        ),
+    );
+    const x = a.x + t * dx;
+    const y = a.y + t * dy;
+    return Math.hypot(point.x - x, point.y - y);
 }
 
 function edgeAt(point) {
-  let closest;
-  let closestDistance = Infinity;
-  const tolerance = Math.max(7, 6 / viewport.k);
-  for (const edge of edges) {
-    if (!nodeVisible(edge.source) || !nodeVisible(edge.target)) continue;
-    const distance = distanceToSegment(point, { x: edge.source.x || 0, y: edge.source.y || 0 }, { x: edge.target.x || 0, y: edge.target.y || 0 });
-    if (distance <= tolerance && distance < closestDistance) {
-      closest = edge;
-      closestDistance = distance;
+    let closest;
+    let closestDistance = Infinity;
+    const tolerance = Math.max(7, 6 / viewport.k);
+    for (const edge of edges) {
+        if (!nodeVisible(edge.source) || !nodeVisible(edge.target)) continue;
+        const distance = distanceToSegment(
+            point,
+            {x: edge.source.x || 0, y: edge.source.y || 0},
+            {x: edge.target.x || 0, y: edge.target.y || 0},
+        );
+        if (distance <= tolerance && distance < closestDistance) {
+            closest = edge;
+            closestDistance = distance;
+        }
     }
-  }
-  return closest;
+    return closest;
 }
 
 function openGraphTarget(point) {
-  const node = nodeAt(point);
-  if (node) {
-    vscode.postMessage({ type: "openNote", id: node.id });
-    return true;
-  }
-  const edge = edgeAt(point);
-  if (edge) {
-    vscode.postMessage({ type: "openNote", id: edge.target.id });
-    return true;
-  }
-  return false;
+    const node = nodeAt(point);
+    if (node) {
+        vscode.postMessage({type: "openNote", id: node.id});
+        return true;
+    }
+    const edge = edgeAt(point);
+    if (edge) {
+        vscode.postMessage({type: "openNote", id: edge.target.id});
+        return true;
+    }
+    return false;
 }
 
 function fitGraph(duration = 300) {
-  if (!app || !zoomHandler) return;
-  const visibleNodes = nodes.filter(nodeVisible);
-  const { width, height } = viewportSize();
-  if (!visibleNodes.length) {
-    d3.select(app.view).transition().duration(duration).call(zoomHandler.transform, d3.zoomIdentity);
-    return;
-  }
-  const padding = 60;
-  const xs = visibleNodes.map((node) => node.x || 0);
-  const ys = visibleNodes.map((node) => node.y || 0);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  const graphWidth = Math.max(maxX - minX, 1);
-  const graphHeight = Math.max(maxY - minY, 1);
-  const scale = Math.max(0.2, Math.min(4, Math.min((width - padding * 2) / graphWidth, (height - padding * 2) / graphHeight)));
-  const x = width / 2 - ((minX + maxX) / 2) * scale;
-  const y = height / 2 - ((minY + maxY) / 2) * scale;
-  const transform = d3.zoomIdentity.translate(x, y).scale(scale);
-  d3.select(app.view).transition().duration(duration).call(zoomHandler.transform, transform);
+    if (!app || !zoomHandler) return;
+    const visibleNodes = nodes.filter(nodeVisible);
+    const {width, height} = viewportSize();
+    if (!visibleNodes.length) {
+        d3.select(app.view)
+            .transition()
+            .duration(duration)
+            .call(zoomHandler.transform, d3.zoomIdentity);
+        return;
+    }
+    const padding = 60;
+    const xs = visibleNodes.map((node) => node.x || 0);
+    const ys = visibleNodes.map((node) => node.y || 0);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const graphWidth = Math.max(maxX - minX, 1);
+    const graphHeight = Math.max(maxY - minY, 1);
+    const scale = Math.max(
+        0.2,
+        Math.min(
+            4,
+            Math.min(
+                (width - padding * 2) / graphWidth,
+                (height - padding * 2) / graphHeight,
+            ),
+        ),
+    );
+    const x = width / 2 - ((minX + maxX) / 2) * scale;
+    const y = height / 2 - ((minY + maxY) / 2) * scale;
+    const transform = d3.zoomIdentity.translate(x, y).scale(scale);
+    d3.select(app.view)
+        .transition()
+        .duration(duration)
+        .call(zoomHandler.transform, transform);
 }
 
 function createSimulation() {
-  const { width, height } = viewportSize();
-  const linkForce = d3.forceLink(edges).id((node) => node.id).distance(option("linkDistance")).strength(option("linkForce") / 100);
-  return d3.forceSimulation(nodes)
-    .force("link", linkForce)
-    .force("charge", d3.forceManyBody().strength((node) => -option("repelForce") * chargeScale(node)))
-    // forceX/forceY (not forceCenter) give every node its own pull toward the
-    // shared center, proportional to how far it has drifted. forceCenter only
-    // recenters the *average* of all nodes as one translation, so separate
-    // components (or a dragged-away cluster) could drift apart forever
-    // without anything actually pulling them back together.
-    .force("x", d3.forceX(width / 2).strength(option("centerForce") / 100))
-    .force("y", d3.forceY(height / 2).strength(option("centerForce") / 100))
-    .force("collide", d3.forceCollide().radius((node) => 8 + Math.min(12, Math.sqrt(degrees.get(node.id) || 0) * 3) + 3).strength(0.8))
-    .velocityDecay(option("velocityDecay"))
-    .on("tick", draw);
+    const {width, height} = viewportSize();
+    const linkForce = d3
+        .forceLink(edges)
+        .id((node) => node.id)
+        .distance(option("linkDistance"))
+        .strength(option("linkForce") / 100);
+    return (
+        d3
+            .forceSimulation(nodes)
+            .force("link", linkForce)
+            .force(
+                "charge",
+                d3
+                    .forceManyBody()
+                    .strength(
+                        (node) => -option("repelForce") * chargeScale(node),
+                    ),
+            )
+            // forceX/forceY (not forceCenter) give every node its own pull toward the
+            // shared center, proportional to how far it has drifted. forceCenter only
+            // recenters the *average* of all nodes as one translation, so separate
+            // components (or a dragged-away cluster) could drift apart forever
+            // without anything actually pulling them back together.
+            .force(
+                "x",
+                d3.forceX(width / 2).strength(option("centerForce") / 100),
+            )
+            .force(
+                "y",
+                d3.forceY(height / 2).strength(option("centerForce") / 100),
+            )
+            .force(
+                "collide",
+                d3
+                    .forceCollide()
+                    .radius(
+                        (node) =>
+                            8 +
+                            Math.min(
+                                12,
+                                Math.sqrt(degrees.get(node.id) || 0) * 3,
+                            ) +
+                            3,
+                    )
+                    .strength(0.8),
+            )
+            .velocityDecay(option("velocityDecay"))
+            .on("tick", draw)
+    );
 }
 
 function updateSimulationForces(restart = true) {
-  if (!simulation) return;
-  const { width, height } = viewportSize();
-  simulation.force("link").distance(option("linkDistance")).strength(option("linkForce") / 100);
-  simulation.force("charge").strength((node) => -option("repelForce") * chargeScale(node));
-  simulation.force("x").x(width / 2).strength(option("centerForce") / 100);
-  simulation.force("y").y(height / 2).strength(option("centerForce") / 100);
-  simulation.velocityDecay(option("velocityDecay"));
-  if (restart) simulation.alpha(0.5).restart();
+    if (!simulation) return;
+    const {width, height} = viewportSize();
+    simulation
+        .force("link")
+        .distance(option("linkDistance"))
+        .strength(option("linkForce") / 100);
+    simulation
+        .force("charge")
+        .strength((node) => -option("repelForce") * chargeScale(node));
+    simulation
+        .force("x")
+        .x(width / 2)
+        .strength(option("centerForce") / 100);
+    simulation
+        .force("y")
+        .y(height / 2)
+        .strength(option("centerForce") / 100);
+    simulation.velocityDecay(option("velocityDecay"));
+    if (restart) simulation.alpha(0.5).restart();
 }
 
 function initialise(graph) {
-  if (!app) { pendingGraph = graph; return; }
-  try {
-    simulation?.stop();
-    if (animationFrame) cancelAnimationFrame(animationFrame);
-    animationState = null;
-    hoverId = undefined;
-    viewport = { x: 0, y: 0, k: 1 };
-    nodes = (graph.nodes || []).map((node) => ({ ...node }));
-    const byId = new Map(nodes.map((node) => [node.id, node]));
-    edges = (graph.edges || []).map((edge) => ({ ...edge, source: byId.get(edge.source), target: byId.get(edge.target) })).filter((edge) => edge.source && edge.target);
-    rebuildTopology();
-    simulation = createSimulation();
-    zoomHandler = d3.zoom().scaleExtent([0.2, 4]).on("zoom", (event) => {
-      viewport = event.transform;
-      container.position.set(viewport.x, viewport.y);
-      container.scale.set(viewport.k);
-      draw();
-    });
+    if (!app) {
+        pendingGraph = graph;
+        return;
+    }
+    try {
+        simulation?.stop();
+        if (animationFrame) cancelAnimationFrame(animationFrame);
+        animationState = null;
+        hoverId = undefined;
+        viewport = {x: 0, y: 0, k: 1};
+        nodes = (graph.nodes || []).map((node) => ({...node}));
+        const byId = new Map(nodes.map((node) => [node.id, node]));
+        edges = (graph.edges || [])
+            .map((edge) => ({
+                ...edge,
+                source: byId.get(edge.source),
+                target: byId.get(edge.target),
+            }))
+            .filter((edge) => edge.source && edge.target);
+        rebuildTopology();
+        simulation = createSimulation();
+        zoomHandler = d3
+            .zoom()
+            .scaleExtent([0.2, 4])
+            .on("zoom", (event) => {
+                viewport = event.transform;
+                container.position.set(viewport.x, viewport.y);
+                container.scale.set(viewport.k);
+                draw();
+            });
 
-    const selection = d3.select(app.view);
-    // Bind drag BEFORE zoom. d3-drag calls stopImmediatePropagation() on
-    // mousedown when it finds a valid subject (a node), which only prevents
-    // other listeners on the same element from firing if those listeners
-    // are registered *after* drag's. Binding zoom first meant its pan
-    // handler always ran before drag could claim the event, so grabbing a
-    // node just panned the canvas instead of dragging the node.
-    selection.on(".drag", null).call(d3.drag()
-      .container(app.view)
-      .subject((event) => nodeAt({ x: (event.x - viewport.x) / viewport.k, y: (event.y - viewport.y) / viewport.k }))
-      .on("start", (event) => {
-        if (!event.subject) return;
-        dragStart = { x: event.x, y: event.y };
-        simulation.alphaTarget(0.25).restart();
-        event.subject.fx = event.subject.x;
-        event.subject.fy = event.subject.y;
-      })
-      .on("drag", (event) => {
-        if (!event.subject) return;
-        event.subject.fx = (event.x - viewport.x) / viewport.k;
-        event.subject.fy = (event.y - viewport.y) / viewport.k;
-      })
-      .on("end", (event) => {
-        if (!event.subject) return;
-        simulation.alphaTarget(0);
-        event.subject.fx = null;
-        event.subject.fy = null;
-        dragStart = undefined;
-      }));
-    selection.on(".zoom", null).call(zoomHandler);
+        const selection = d3.select(app.view);
+        // Bind drag BEFORE zoom. d3-drag calls stopImmediatePropagation() on
+        // mousedown when it finds a valid subject (a node), which only prevents
+        // other listeners on the same element from firing if those listeners
+        // are registered *after* drag's. Binding zoom first meant its pan
+        // handler always ran before drag could claim the event, so grabbing a
+        // node just panned the canvas instead of dragging the node.
+        selection.on(".drag", null).call(
+            d3
+                .drag()
+                .container(app.view)
+                .subject((event) =>
+                    nodeAt({
+                        x: (event.x - viewport.x) / viewport.k,
+                        y: (event.y - viewport.y) / viewport.k,
+                    }),
+                )
+                .on("start", (event) => {
+                    if (!event.subject) return;
+                    dragStart = {x: event.x, y: event.y};
+                    simulation.alphaTarget(0.25).restart();
+                    event.subject.fx = event.subject.x;
+                    event.subject.fy = event.subject.y;
+                })
+                .on("drag", (event) => {
+                    if (!event.subject) return;
+                    event.subject.fx = (event.x - viewport.x) / viewport.k;
+                    event.subject.fy = (event.y - viewport.y) / viewport.k;
+                })
+                .on("end", (event) => {
+                    if (!event.subject) return;
+                    simulation.alphaTarget(0);
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                    dragStart = undefined;
+                }),
+        );
+        selection.on(".zoom", null).call(zoomHandler);
 
-    draw();
-    startAnimation();
-  } catch (error) {
-    vscode.postMessage({ type: "error", message: error instanceof Error ? error.message : String(error) });
-  }
+        draw();
+        startAnimation();
+    } catch (error) {
+        vscode.postMessage({
+            type: "error",
+            message: error instanceof Error ? error.message : String(error),
+        });
+    }
 }
 
 async function setup() {
-  try {
-    app = new PIXI.Application({ resizeTo: host, backgroundAlpha: 0, antialias: true, resolution: window.devicePixelRatio || 1, autoDensity: true });
-    host.replaceChildren(app.view);
-    container = new PIXI.Container();
-    app.stage.addChild(container);
+    try {
+        app = new PIXI.Application({
+            resizeTo: host,
+            backgroundAlpha: 0,
+            antialias: true,
+            resolution: window.devicePixelRatio || 1,
+            autoDensity: true,
+        });
+        host.replaceChildren(app.view);
+        container = new PIXI.Container();
+        app.stage.addChild(container);
 
-    resizeObserver = new ResizeObserver(() => {
-      if (!simulation) return;
-      updateSimulationForces(false);
-      simulation.alpha(0.15).restart();
-      draw();
-    });
-    resizeObserver.observe(host);
+        resizeObserver = new ResizeObserver(() => {
+            if (!simulation) return;
+            updateSimulationForces(false);
+            simulation.alpha(0.15).restart();
+            draw();
+        });
+        resizeObserver.observe(host);
 
-    let pointerDown;
-    app.view.addEventListener("pointerdown", (event) => {
-      const point = graphPoint(event);
-      pointerDown = { x: event.clientX, y: event.clientY, point };
-    });
-    app.view.addEventListener("pointerup", (event) => {
-      if (!pointerDown) return;
-      const moved = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y);
-      const point = graphPoint(event);
-      pointerDown = undefined;
-      if (moved <= 5) openGraphTarget(point);
-    });
-    app.view.addEventListener("pointermove", (event) => {
-      const node = nodeAt(graphPoint(event));
-      if (node?.id !== hoverId) {
-        hoverId = node?.id;
-        draw();
-      }
-    });
-    app.view.addEventListener("pointerleave", () => {
-      pointerDown = undefined;
-      if (hoverId !== undefined) {
-        hoverId = undefined;
-        draw();
-      }
-    });
+        let pointerDown;
+        app.view.addEventListener("pointerdown", (event) => {
+            const point = graphPoint(event);
+            pointerDown = {x: event.clientX, y: event.clientY, point};
+        });
+        app.view.addEventListener("pointerup", (event) => {
+            if (!pointerDown) return;
+            const moved = Math.hypot(
+                event.clientX - pointerDown.x,
+                event.clientY - pointerDown.y,
+            );
+            const point = graphPoint(event);
+            pointerDown = undefined;
+            if (moved <= 5) openGraphTarget(point);
+        });
+        app.view.addEventListener("pointermove", (event) => {
+            const node = nodeAt(graphPoint(event));
+            if (node?.id !== hoverId) {
+                hoverId = node?.id;
+                draw();
+            }
+        });
+        app.view.addEventListener("pointerleave", () => {
+            pointerDown = undefined;
+            if (hoverId !== undefined) {
+                hoverId = undefined;
+                draw();
+            }
+        });
 
-    vscode.postMessage({ type: "ready" });
-    if (pendingGraph) {
-      const nextGraph = pendingGraph;
-      pendingGraph = null;
-      initialise(nextGraph);
-      document.querySelector("#emptyState").hidden = true;
-      document.querySelector("#status").textContent = `Vault selected: ${nextGraph.vaultPath || ""} · ${nextGraph.nodes.length} notes · ${nextGraph.edges.length} links`;
+        vscode.postMessage({type: "ready"});
+        if (pendingGraph) {
+            const nextGraph = pendingGraph;
+            pendingGraph = null;
+            initialise(nextGraph);
+            document.querySelector("#emptyState").hidden = true;
+            document.querySelector("#status").textContent =
+                `Vault selected: ${nextGraph.vaultPath || ""} · ${nextGraph.nodes.length} notes · ${nextGraph.edges.length} links`;
+        }
+    } catch (error) {
+        vscode.postMessage({
+            type: "error",
+            message: error instanceof Error ? error.message : String(error),
+        });
     }
-  } catch (error) {
-    vscode.postMessage({ type: "error", message: error instanceof Error ? error.message : String(error) });
-  }
 }
 
-document.querySelector("#chooseVault").onclick = () => vscode.postMessage({ type: "chooseVault" });
-document.querySelector("#refresh").onclick = () => vscode.postMessage({ type: "refresh" });
+document.querySelector("#chooseVault").onclick = () =>
+    vscode.postMessage({type: "chooseVault"});
+document.querySelector("#refresh").onclick = () =>
+    vscode.postMessage({type: "refresh"});
 document.querySelector("#fit").onclick = () => fitGraph();
 document.querySelector("#settingsButton").onclick = () => {
-  const settings = document.querySelector("#settings");
-  settings.hidden = !settings.hidden;
+    const settings = document.querySelector("#settings");
+    settings.hidden = !settings.hidden;
 };
-document.querySelector("#closeSettings").onclick = () => { document.querySelector("#settings").hidden = true; };
+document.querySelector("#closeSettings").onclick = () => {
+    document.querySelector("#settings").hidden = true;
+};
 
 for (const [id, control] of Object.entries(controls)) {
-  control.addEventListener("input", () => {
-    if (control.type === "range") syncRangeValue(id);
-    if (FORCE_CONTROL_IDS.has(id)) updateSimulationForces();
-    draw();
-  });
+    control.addEventListener("input", () => {
+        if (control.type === "range") syncRangeValue(id);
+        if (FORCE_CONTROL_IDS.has(id)) updateSimulationForces();
+        draw();
+    });
 }
 
 syncAllRangeValues();
@@ -536,38 +737,41 @@ syncAllRangeValues();
 document.querySelector("#animate").onclick = () => startAnimation();
 
 document.querySelector("#reset").onclick = () => {
-  for (const [name, value] of Object.entries(defaults)) {
-    if (typeof value === "boolean") controls[name].checked = value;
-    else controls[name].value = value;
-  }
-  syncAllRangeValues();
-  updateSimulationForces();
-  draw();
+    for (const [name, value] of Object.entries(defaults)) {
+        if (typeof value === "boolean") controls[name].checked = value;
+        else controls[name].value = value;
+    }
+    syncAllRangeValues();
+    updateSimulationForces();
+    draw();
 };
 
 addEventListener("message", (event) => {
-  if (event.data.type === "vaultStatus") {
-    document.querySelector("#status").textContent = `Vault selected: ${event.data.vaultPath}`;
-    document.querySelector("#emptyState").textContent = "Loading graph...";
-    document.querySelector("#emptyState").hidden = false;
-    return;
-  }
-  if (event.data.type !== "graph") return;
-  if (!app) {
-    pendingGraph = event.data.graph;
-    document.querySelector("#emptyState").textContent = "Initializing graph renderer...";
-    return;
-  }
-  initialise(event.data.graph);
-  document.querySelector("#emptyState").hidden = true;
-  document.querySelector("#status").textContent = `Vault selected: ${event.data.vaultPath} · ${event.data.graph.nodes.length} notes · ${event.data.graph.edges.length} links`;
+    if (event.data.type === "vaultStatus") {
+        document.querySelector("#status").textContent =
+            `Vault selected: ${event.data.vaultPath}`;
+        document.querySelector("#emptyState").textContent = "Loading graph...";
+        document.querySelector("#emptyState").hidden = false;
+        return;
+    }
+    if (event.data.type !== "graph") return;
+    if (!app) {
+        pendingGraph = event.data.graph;
+        document.querySelector("#emptyState").textContent =
+            "Initializing graph renderer...";
+        return;
+    }
+    initialise(event.data.graph);
+    document.querySelector("#emptyState").hidden = true;
+    document.querySelector("#status").textContent =
+        `Vault selected: ${event.data.vaultPath} · ${event.data.graph.nodes.length} notes · ${event.data.graph.edges.length} links`;
 });
 
 addEventListener("beforeunload", () => {
-  simulation?.stop();
-  if (animationFrame) cancelAnimationFrame(animationFrame);
-  resizeObserver?.disconnect();
-  app?.destroy(true);
+    simulation?.stop();
+    if (animationFrame) cancelAnimationFrame(animationFrame);
+    resizeObserver?.disconnect();
+    app?.destroy(true);
 });
 
 setup();
