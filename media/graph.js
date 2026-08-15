@@ -2,7 +2,7 @@ const vscode = acquireVsCodeApi();
 const host = document.querySelector("#graph");
 const controls = Object.fromEntries([...document.querySelectorAll("input")].map((input) => [input.id, input]));
 const rangeValueOutputs = Object.fromEntries([...document.querySelectorAll(".range-value")].map((output) => [output.getAttribute("for"), output]));
-const defaults = { existing: false, orphans: true, arrows: false, labels: true, textFadeThreshold: 0, nodeSize: 100, linkWidth: 100, centerForce: 10, repelForce: 100, linkForce: 100, linkDistance: 100 };
+const defaults = { existing: false, orphans: true, arrows: false, labels: true, textFadeThreshold: 0, nodeSize: 50, linkWidth: 50, centerForce: 8, repelForce: 100, linkForce: 30, linkDistance: 300 };
 const FORCE_CONTROL_IDS = new Set(["centerForce", "repelForce", "linkForce", "linkDistance"]);
 
 function syncRangeValue(id) {
@@ -128,17 +128,72 @@ function revealFactor(id) {
   if (elapsed <= 0) return 0;
   if (elapsed >= animationState.popDuration) return 1;
   const t = elapsed / animationState.popDuration;
-  return 1 - Math.pow(1 - t, 3);
+  // Gentle ease-out-quint: starts quick, settles in slowly instead of
+  // snapping to full size, so each node "blooms" rather than pops.
+  return 1 - Math.pow(1 - t, 5);
+}
+
+// Builds a breadth-first reveal order starting from the best-connected
+// visible node, so the graph appears to grow organically: one seed node
+// first, then its direct links, then the next ring of links out from
+// those, and so on - instead of nodes appearing in arbitrary/list order.
+function computeRevealWaves(order) {
+  const visibleSet = new Set(order);
+  let root = order[0];
+  let bestDegree = -1;
+  for (const id of order) {
+    const degree = degrees.get(id) || 0;
+    if (degree > bestDegree) {
+      bestDegree = degree;
+      root = id;
+    }
+  }
+
+  const visited = new Set([root]);
+  const waves = [[root]];
+  let frontier = [root];
+  while (frontier.length) {
+    const next = [];
+    for (const id of frontier) {
+      for (const neighbor of adjacency.get(id) || []) {
+        if (!visibleSet.has(neighbor) || visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        next.push(neighbor);
+      }
+    }
+    if (next.length) waves.push(next);
+    frontier = next;
+  }
+
+  // Anything not reached from the root (separate components/orphans)
+  // still needs to appear - trickle those in as trailing waves rather
+  // than dumping them all in at once.
+  const remaining = order.filter((id) => !visited.has(id));
+  const chunkSize = Math.max(1, Math.ceil(remaining.length / Math.max(1, waves.length)));
+  for (let i = 0; i < remaining.length; i += chunkSize) {
+    waves.push(remaining.slice(i, i + chunkSize));
+  }
+  return waves;
 }
 
 function startAnimation() {
   const order = nodes.filter(nodeVisible).map((node) => node.id);
   if (!order.length) return;
   if (animationFrame) cancelAnimationFrame(animationFrame);
-  const totalDuration = Math.min(4000, Math.max(500, order.length * 45));
-  const popDuration = 260;
-  const stagger = totalDuration / order.length;
-  const revealAt = new Map(order.map((id, index) => [id, index * stagger]));
+
+  const waves = computeRevealWaves(order);
+  const popDuration = 640;       // how long a single node takes to bloom in
+  const waveGap = 320;           // pause before the next ring starts appearing
+  const withinWaveStagger = 90;  // nodes in the same ring still trickle in, not pop together
+
+  const revealAt = new Map();
+  let cursor = 0;
+  for (const wave of waves) {
+    wave.forEach((id, index) => revealAt.set(id, cursor + index * withinWaveStagger));
+    cursor += waveGap + (wave.length - 1) * withinWaveStagger;
+  }
+  const totalDuration = cursor;
+
   animationState = { revealAt, startTime: performance.now(), popDuration, totalDuration };
   const step = () => {
     if (!animationState) return;
@@ -385,6 +440,7 @@ function initialise(graph) {
     selection.on(".zoom", null).call(zoomHandler);
 
     draw();
+    startAnimation();
   } catch (error) {
     vscode.postMessage({ type: "error", message: error instanceof Error ? error.message : String(error) });
   }
