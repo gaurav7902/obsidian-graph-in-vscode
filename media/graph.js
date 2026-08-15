@@ -2,8 +2,8 @@ const vscode = acquireVsCodeApi();
 const host = document.querySelector("#graph");
 const controls = Object.fromEntries([...document.querySelectorAll("input")].map((input) => [input.id, input]));
 const rangeValueOutputs = Object.fromEntries([...document.querySelectorAll(".range-value")].map((output) => [output.getAttribute("for"), output]));
-const defaults = { existing: false, orphans: true, arrows: false, labels: true, textFadeThreshold: 0, nodeSize: 50, linkWidth: 50, centerForce: 8, repelForce: 100, linkForce: 30, linkDistance: 300 };
-const FORCE_CONTROL_IDS = new Set(["centerForce", "repelForce", "linkForce", "linkDistance"]);
+const defaults = { existing: false, orphans: true, arrows: false, labels: true, textFadeThreshold: 0, nodeSize: 50, linkWidth: 50, centerForce: 8, repelForce: 100, linkForce: 30, linkDistance: 300, velocityDecay: 0.4 };
+const FORCE_CONTROL_IDS = new Set(["centerForce", "repelForce", "linkForce", "linkDistance", "velocityDecay"]);
 
 function syncRangeValue(id) {
   const output = rangeValueOutputs[id];
@@ -114,6 +114,17 @@ function relatedNodes() {
 function nodeRadius(node) {
   const degree = degrees.get(node.id) || 0;
   return (5 + Math.min(12, Math.sqrt(degree) * 3)) * option("nodeSize") / 100;
+}
+
+// Real Obsidian scales how hard a note pushes its neighbours away by how
+// connected that note is - hub notes shove open a clear pocket of space
+// around themselves, while orphans/leaves barely repel at all and end up
+// clustering tightly. A flat repel strength for every node (regardless of
+// degree) is what makes a force graph feel generic; this factor is what
+// makes it feel like Obsidian's own graph view.
+function chargeScale(node) {
+  const degree = degrees.get(node.id) || 0;
+  return Math.sqrt(1 + degree * 0.5);
 }
 
 function textFadeCutoff() {
@@ -366,7 +377,7 @@ function createSimulation() {
   const linkForce = d3.forceLink(edges).id((node) => node.id).distance(option("linkDistance")).strength(option("linkForce") / 100);
   return d3.forceSimulation(nodes)
     .force("link", linkForce)
-    .force("charge", d3.forceManyBody().strength(-option("repelForce")))
+    .force("charge", d3.forceManyBody().strength((node) => -option("repelForce") * chargeScale(node)))
     // forceX/forceY (not forceCenter) give every node its own pull toward the
     // shared center, proportional to how far it has drifted. forceCenter only
     // recenters the *average* of all nodes as one translation, so separate
@@ -375,6 +386,7 @@ function createSimulation() {
     .force("x", d3.forceX(width / 2).strength(option("centerForce") / 100))
     .force("y", d3.forceY(height / 2).strength(option("centerForce") / 100))
     .force("collide", d3.forceCollide().radius((node) => 8 + Math.min(12, Math.sqrt(degrees.get(node.id) || 0) * 3) + 3).strength(0.8))
+    .velocityDecay(option("velocityDecay"))
     .on("tick", draw);
 }
 
@@ -382,9 +394,10 @@ function updateSimulationForces(restart = true) {
   if (!simulation) return;
   const { width, height } = viewportSize();
   simulation.force("link").distance(option("linkDistance")).strength(option("linkForce") / 100);
-  simulation.force("charge").strength(-option("repelForce"));
+  simulation.force("charge").strength((node) => -option("repelForce") * chargeScale(node));
   simulation.force("x").x(width / 2).strength(option("centerForce") / 100);
   simulation.force("y").y(height / 2).strength(option("centerForce") / 100);
+  simulation.velocityDecay(option("velocityDecay"));
   if (restart) simulation.alpha(0.5).restart();
 }
 
