@@ -141,6 +141,15 @@ input[type="range"] {
   cursor: pointer;
 }
 
+.range-value {
+  min-width: 32px;
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+  flex: none;
+}
+
 #reset {
   margin-top: auto;
   background-color: var(--vscode-button-secondaryBackground);

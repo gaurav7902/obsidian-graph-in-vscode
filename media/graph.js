@@ -1,8 +1,20 @@
 const vscode = acquireVsCodeApi();
 const host = document.querySelector("#graph");
 const controls = Object.fromEntries([...document.querySelectorAll("input")].map((input) => [input.id, input]));
+const rangeValueOutputs = Object.fromEntries([...document.querySelectorAll(".range-value")].map((output) => [output.getAttribute("for"), output]));
 const defaults = { existing: false, orphans: true, arrows: false, labels: true, textFadeThreshold: 0, nodeSize: 100, linkWidth: 100, centerForce: 10, repelForce: 100, linkForce: 100, linkDistance: 100 };
 const FORCE_CONTROL_IDS = new Set(["centerForce", "repelForce", "linkForce", "linkDistance"]);
+
+function syncRangeValue(id) {
+  const output = rangeValueOutputs[id];
+  const control = controls[id];
+  if (!output || !control) return;
+  output.textContent = control.value;
+}
+
+function syncAllRangeValues() {
+  for (const id of Object.keys(rangeValueOutputs)) syncRangeValue(id);
+}
 let app;
 let container;
 let nodes = [];
@@ -444,10 +456,13 @@ document.querySelector("#closeSettings").onclick = () => { document.querySelecto
 
 for (const [id, control] of Object.entries(controls)) {
   control.addEventListener("input", () => {
+    if (control.type === "range") syncRangeValue(id);
     if (FORCE_CONTROL_IDS.has(id)) updateSimulationForces();
     draw();
   });
 }
+
+syncAllRangeValues();
 
 document.querySelector("#animate").onclick = () => startAnimation();
 
@@ -456,6 +471,7 @@ document.querySelector("#reset").onclick = () => {
     if (typeof value === "boolean") controls[name].checked = value;
     else controls[name].value = value;
   }
+  syncAllRangeValues();
   updateSimulationForces();
   draw();
 };
