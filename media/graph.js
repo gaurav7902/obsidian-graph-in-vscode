@@ -22,6 +22,7 @@ const defaults = {
     linkForce: 30,
     linkDistance: 300,
     velocityDecay: 0.4,
+    highlightColor: "#ffffff",
 };
 const FORCE_CONTROL_IDS = new Set([
     "centerForce",
@@ -62,9 +63,13 @@ const degrees = new Map();
 
 function option(name) {
     const control = controls[name];
-    return control.type === "checkbox"
-        ? control.checked
-        : Number(control.value);
+    if (control.type === "checkbox") return control.checked;
+    if (control.type === "color") return control.value;
+    return Number(control.value);
+}
+
+function highlightColor() {
+    return parseInt(option("highlightColor").slice(1), 16) || 0xffffff;
 }
 
 function viewportSize() {
@@ -298,8 +303,9 @@ function draw() {
             !related ||
             (related.has(edge.source.id) && related.has(edge.target.id));
         const linkAlpha = (active ? 0.6 : 0.1) * reveal;
+        const edgeColor = active ? highlightColor() : 0x7c8b98;
         graphic.clear();
-        graphic.lineStyle(option("linkWidth") / 100, 0x7c8b98, linkAlpha);
+        graphic.lineStyle(option("linkWidth") / 100, edgeColor, linkAlpha);
         graphic.moveTo(edge.source.x || 0, edge.source.y || 0);
         graphic.lineTo(edge.target.x || 0, edge.target.y || 0);
         if (option("arrows")) {
@@ -316,7 +322,7 @@ function draw() {
             const tipX = tx - ux * gap,
                 tipY = ty - uy * gap;
             const size = (4.5 * option("linkWidth")) / 100 + 2.5;
-            graphic.beginFill(0x7c8b98, linkAlpha);
+            graphic.beginFill(edgeColor, linkAlpha);
             graphic.moveTo(tipX, tipY);
             graphic.lineTo(
                 tipX - ux * size - uy * size * 0.6,
@@ -332,6 +338,7 @@ function draw() {
     }
 
     const fadeCutoff = textFadeCutoff();
+    const nodeHighlight = highlightColor();
     for (const node of nodes) {
         nodeIds.add(node.id);
         const graphic = shape(nodeShapes, node.id, () => new PIXI.Graphics());
@@ -354,9 +361,17 @@ function draw() {
         const active = !related || related.has(node.id);
         const alpha = (related && !active ? 0.12 : 1) * reveal;
         graphic.clear();
-        graphic.lineStyle(active ? 2 : 1, active ? 0xffffff : 0xc8bdff, alpha);
+        graphic.lineStyle(
+            active ? 2 : 1,
+            active ? nodeHighlight : 0xc8bdff,
+            alpha,
+        );
         graphic.beginFill(
-            node.missing ? 0x767676 : active ? 0xffffff : color(node.folder),
+            node.missing
+                ? 0x767676
+                : active
+                  ? nodeHighlight
+                  : color(node.folder),
             alpha,
         );
         graphic.drawCircle(0, 0, radius);
@@ -699,9 +714,11 @@ async function setup() {
             const nextGraph = pendingGraph;
             pendingGraph = null;
             initialise(nextGraph);
-            document.querySelector("#emptyState").hidden = true;
-            document.querySelector("#status").textContent =
-                `Vault selected: ${nextGraph.vaultPath || ""} · ${nextGraph.nodes.length} notes · ${nextGraph.edges.length} links`;
+            setEmptyState("", {hidden: true});
+            setStatus(
+                `${nextGraph.vaultPath || ""} · ${nextGraph.nodes.length} notes · ${nextGraph.edges.length} links`,
+                "connected",
+            );
         }
     } catch (error) {
         vscode.postMessage({
@@ -711,17 +728,43 @@ async function setup() {
     }
 }
 
+function setStatus(text, state) {
+    document.querySelector("#statusText").textContent = text;
+    const pill = document.querySelector("#status");
+    pill.classList.remove("status-loading", "status-connected");
+    if (state) pill.classList.add(`status-${state}`);
+}
+function setEmptyState(text, options = {}) {
+    const emptyState = document.querySelector("#emptyState");
+    emptyState.hidden = options.hidden ?? false;
+    document.querySelector("#emptyStateText").textContent = text;
+    document.querySelector("#emptyChooseVault").hidden = Boolean(
+        options.hideAction,
+    );
+}
+
 document.querySelector("#chooseVault").onclick = () =>
+    vscode.postMessage({type: "chooseVault"});
+document.querySelector("#emptyChooseVault").onclick = () =>
     vscode.postMessage({type: "chooseVault"});
 document.querySelector("#refresh").onclick = () =>
     vscode.postMessage({type: "refresh"});
 document.querySelector("#fit").onclick = () => fitGraph();
-document.querySelector("#settingsButton").onclick = () => {
+function setSettingsOpen(open) {
     const settings = document.querySelector("#settings");
-    settings.hidden = !settings.hidden;
+    const settingsButton = document.querySelector("#settingsButton");
+    settings.classList.toggle("settings-closed", !open);
+    settingsButton.setAttribute("aria-expanded", String(open));
+    settingsButton.classList.toggle("toolbar-btn-active", open);
+}
+document.querySelector("#settingsButton").onclick = () => {
+    const isOpen = !document
+        .querySelector("#settings")
+        .classList.contains("settings-closed");
+    setSettingsOpen(!isOpen);
 };
 document.querySelector("#closeSettings").onclick = () => {
-    document.querySelector("#settings").hidden = true;
+    setSettingsOpen(false);
 };
 
 for (const [id, control] of Object.entries(controls)) {
@@ -748,23 +791,22 @@ document.querySelector("#reset").onclick = () => {
 
 addEventListener("message", (event) => {
     if (event.data.type === "vaultStatus") {
-        document.querySelector("#status").textContent =
-            `Vault selected: ${event.data.vaultPath}`;
-        document.querySelector("#emptyState").textContent = "Loading graph...";
-        document.querySelector("#emptyState").hidden = false;
+        setStatus(event.data.vaultPath, "loading");
+        setEmptyState("Loading graph...", {hideAction: true});
         return;
     }
     if (event.data.type !== "graph") return;
     if (!app) {
         pendingGraph = event.data.graph;
-        document.querySelector("#emptyState").textContent =
-            "Initializing graph renderer...";
+        setEmptyState("Initializing graph renderer...", {hideAction: true});
         return;
     }
     initialise(event.data.graph);
-    document.querySelector("#emptyState").hidden = true;
-    document.querySelector("#status").textContent =
-        `Vault selected: ${event.data.vaultPath} · ${event.data.graph.nodes.length} notes · ${event.data.graph.edges.length} links`;
+    setEmptyState("", {hidden: true});
+    setStatus(
+        `${event.data.vaultPath} · ${event.data.graph.nodes.length} notes · ${event.data.graph.edges.length} links`,
+        "connected",
+    );
 });
 
 addEventListener("beforeunload", () => {
