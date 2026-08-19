@@ -255,6 +255,18 @@ function startAnimation() {
     animationFrame = requestAnimationFrame(step);
 }
 
+function safeDraw() {
+    try {
+        draw();
+    } catch (error) {
+        console.error("Draw error:", error);
+        vscode.postMessage({
+            type: "error",
+            message: error instanceof Error ? error.message : String(error),
+        });
+    }
+}
+
 function draw() {
     if (!app || !container) return;
     const related = relatedNodes();
@@ -517,7 +529,7 @@ function createSimulation() {
                     .strength(0.8),
             )
             .velocityDecay(option("velocityDecay"))
-            .on("tick", draw)
+            .on("tick", safeDraw)
     );
 }
 
@@ -572,7 +584,7 @@ function initialise(graph) {
                 viewport = event.transform;
                 container.position.set(viewport.x, viewport.y);
                 container.scale.set(viewport.k);
-                draw();
+                safeDraw();
             });
 
         const selection = d3.select(app.view);

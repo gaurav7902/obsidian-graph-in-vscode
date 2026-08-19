@@ -39,7 +39,8 @@
     ],
     "main": "./extension.js",
     "scripts": {
-        "check": "node --check extension.js && node --check src/extension.js && node --check src/graph-panel.js && node --check src/vault-index.js && node --check src/wiki-links.js && node --check media/graph.js",
+        "check": "node --check extension.js && node --check src/extension.js && node --check src/graph-panel.js && node --check src/graph-view.js && node --check src/graph-webview.js && node --check src/vault-index.js && node --check src/wiki-links.js && node --check media/graph.js",
+        "test": "mocha test/**/*.test.js",
         "package": "vsce package --no-dependencies",
         "format": "prettier --write \"**/*.{ts,js,json,md}\""
     },
@@ -58,6 +59,31 @@
                 "title": "Obsidian Graph View: Refresh Graph"
             }
         ],
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "obsidianGraphView",
+                    "title": "Obsidian Graph",
+                    "icon": "public/activitybar-icon.svg"
+                }
+            ]
+        },
+        "views": {
+            "explorer": [
+                {
+                    "type": "webview",
+                    "id": "obsidianVaultGraph.explorerView",
+                    "name": "Obsidian Graph"
+                }
+            ],
+            "obsidianGraphView": [
+                {
+                    "type": "webview",
+                    "id": "obsidianVaultGraph.activityView",
+                    "name": "Graph View"
+                }
+            ]
+        },
         "configuration": {
             "title": "Obsidian Graph View",
             "properties": {
@@ -65,13 +91,29 @@
                     "type": "string",
                     "default": "",
                     "description": "Absolute path to the folder or Markdown file displayed by the graph."
+                },
+                "obsidianVaultGraph.excludeDirectories": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [],
+                    "description": "Additional directories to exclude from the graph (e.g., ['archive', 'templates']). Default exclusions (.git, .obsidian, node_modules) are always applied."
+                },
+                "obsidianVaultGraph.maxFiles": {
+                    "type": "number",
+                    "default": 10000,
+                    "minimum": 100,
+                    "maximum": 100000,
+                    "description": "Maximum number of Markdown files to process in the vault. Prevents performance issues with very large vaults."
                 }
             }
         }
     },
     "devDependencies": {
         "@types/vscode": "^1.85.0",
-        "@vscode/vsce": "^3.9.2"
+        "@vscode/vsce": "^3.9.2",
+        "mocha": "^10.7.3"
     },
     "repository": {
         "type": "git",

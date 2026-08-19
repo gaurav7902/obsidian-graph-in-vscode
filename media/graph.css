@@ -439,33 +439,66 @@ input[type="range"]::-moz-range-track {
     opacity: 1;
 }
 
-#animate {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    align-self: flex-start;
-    background-color: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-foreground);
-    border: 1px solid var(--vscode-panel-border);
-    padding: 6px 14px;
-    cursor: pointer;
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 12px;
-    transition: background-color 0.12s ease;
-}
-
-#animate:hover {
-    background-color: var(
-        --vscode-button-secondaryHoverBackground,
-        var(--vscode-button-secondaryBackground)
-    );
-    filter: brightness(1.1);
-}
-
 .help {
     font-size: 11px;
     opacity: 0.55;
     margin-top: 4px;
     line-height: 1.5;
+}
+
+.toolbar-btn span {
+    display: inline;
+}
+
+@media (max-width: 400px) {
+    header {
+        flex-wrap: wrap;
+        padding: 6px 8px;
+        gap: 4px;
+    }
+
+    .toolbar-btn {
+        padding: 4px 6px;
+        font-size: 11px;
+    }
+
+    .toolbar-btn span {
+        display: none;
+    }
+
+    .toolbar-divider {
+        display: none;
+    }
+
+    .status-pill {
+        width: 100%;
+        margin-left: 0;
+        max-width: 100%;
+        justify-content: center;
+        font-size: 11px;
+        padding: 2px 8px;
+    }
+
+    #settings {
+        width: 100%;
+        max-width: 280px;
+        padding: 12px;
+        gap: 12px;
+    }
+
+    section {
+        gap: 8px;
+    }
+
+    section h2 {
+        font-size: 10px;
+    }
+
+    label {
+        font-size: 11px;
+    }
+
+    #reset {
+        width: 100%;
+    }
 }

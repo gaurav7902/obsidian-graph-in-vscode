@@ -1,26 +1,19 @@
-const vscode = require("vscode");
 const {GraphWebviewController} = require("./graph-webview");
 
-class GraphPanel {
+class GraphView {
     constructor(extensionUri, onMessage) {
         this.controller = new GraphWebviewController(extensionUri, onMessage);
-        this.panel = undefined;
+        this.disposables = [];
     }
 
-    show() {
-        if (this.panel) return this.panel.reveal();
-        this.panel = vscode.window.createWebviewPanel(
-            "obsidianVaultGraph",
-            "Obsidian Graph View",
-            vscode.ViewColumn.One,
-            {},
-        );
-        this.controller.resolve(this.panel.webview, []);
-        this.panel.onDidDispose(() => {
+    resolveWebviewView(webviewView) {
+        this.controller.resolve(webviewView.webview, this.disposables);
+        webviewView.onDidDispose(() => {
             this.controller.webview = undefined;
             this.controller.ready = false;
             this.controller.pendingMessages = [];
-            this.panel = undefined;
+            this.disposables.forEach((d) => d.dispose());
+            this.disposables = [];
         });
     }
 
@@ -33,4 +26,4 @@ class GraphPanel {
     }
 }
 
-module.exports = {GraphPanel};
+module.exports = {GraphView};

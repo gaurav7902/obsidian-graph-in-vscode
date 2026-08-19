@@ -1,11 +1,14 @@
 const vscode = require("vscode");
 const path = require("path");
 const {GraphPanel} = require("./graph-panel");
+const {GraphView} = require("./graph-view");
 const {VaultIndex} = require("./vault-index");
 const {createWikiLinkProvider} = require("./wiki-links");
 
 let index;
 let panel;
+let explorerView;
+let activityView;
 let watcher;
 let refreshTimer;
 let refreshInFlight = null;
@@ -80,6 +83,18 @@ async function chooseSelectionMode() {
     return mode?.value;
 }
 
+function broadcastVaultStatus(vaultPath) {
+    panel?.postVaultStatus(vaultPath);
+    explorerView?.postVaultStatus(vaultPath);
+    activityView?.postVaultStatus(vaultPath);
+}
+
+function broadcastGraph(graph, vaultPath) {
+    panel?.postGraph(graph, vaultPath);
+    explorerView?.postGraph(graph, vaultPath);
+    activityView?.postGraph(graph, vaultPath);
+}
+
 async function refreshGraph() {
     if (refreshInFlight) {
         refreshQueued = true;
@@ -87,18 +102,17 @@ async function refreshGraph() {
     }
 
     const vault = configuredVault();
-    if (!vault || !panel) return;
+    if (!vault) return;
 
     refreshInFlight = (async () => {
         try {
             const sourceKind = (await isDirectory(vault)) ? "folder" : "file";
             const current = await loadVault(vault);
-            if (!panel) return;
             const graph = current.graph();
             console.log(
                 `Refreshing graph (${sourceKind}) ${vault.fsPath} with ${graph.nodes.length} nodes`,
             );
-            panel.postGraph(graph, vault.fsPath);
+            broadcastGraph(graph, vault.fsPath);
         } catch (error) {
             vscode.window.showErrorMessage(
                 `Obsidian Graph View could not read this vault: ${error.message}`,
@@ -147,14 +161,13 @@ async function chooseVault(context) {
         .getConfiguration("obsidianVaultGraph")
         .update("vaultPath", target.fsPath, vscode.ConfigurationTarget.Global);
     watchVault(watchRootFor(target), context);
-    panel.show();
-    panel.postVaultStatus(target.fsPath);
+    panel?.show();
+    broadcastVaultStatus(target.fsPath);
     await refreshGraph();
 }
 
-function activate(context) {
-    extensionContext = context;
-    panel = new GraphPanel(context.extensionUri, async (message) => {
+function createMessageHandler(context) {
+    return async (message) => {
         if (message.type === "ready" || message.type === "refresh") {
             await refreshGraph();
         } else if (message.type === "chooseVault") {
@@ -169,7 +182,16 @@ function activate(context) {
                     await vscode.workspace.openTextDocument(note.uri),
                 );
         }
-    });
+    };
+}
+
+function activate(context) {
+    extensionContext = context;
+    const messageHandler = createMessageHandler(context);
+
+    panel = new GraphPanel(context.extensionUri, messageHandler);
+    explorerView = new GraphView(context.extensionUri, messageHandler);
+    activityView = new GraphView(context.extensionUri, messageHandler);
 
     const configured = configuredVault();
     if (configured) {
@@ -191,6 +213,14 @@ function activate(context) {
         vscode.commands.registerCommand(
             "obsidianVaultGraph.refresh",
             refreshGraph,
+        ),
+        vscode.window.registerWebviewViewProvider(
+            "obsidianVaultGraph.explorerView",
+            explorerView,
+        ),
+        vscode.window.registerWebviewViewProvider(
+            "obsidianVaultGraph.activityView",
+            activityView,
         ),
         vscode.languages.registerDocumentLinkProvider(
             {language: "markdown"},
@@ -214,6 +244,8 @@ function deactivate() {
     refreshInFlight = null;
     refreshQueued = false;
     panel = undefined;
+    explorerView = undefined;
+    activityView = undefined;
     index = undefined;
     extensionContext = undefined;
 }
