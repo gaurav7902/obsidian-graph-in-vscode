@@ -204,18 +204,18 @@ main {
 #settings {
     position: absolute;
     top: 0;
-    right: 0;
+    left: 0;
     width: 300px;
     height: 100%;
     background-color: var(--vscode-sideBar-background);
-    border-left: 1px solid var(--vscode-panel-border);
+    border-right: 1px solid var(--vscode-panel-border);
     padding: 18px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
     gap: 18px;
     z-index: 20;
-    box-shadow: -6px 0 16px rgba(0, 0, 0, 0.15);
+    box-shadow: 6px 0 16px rgba(0, 0, 0, 0.15);
     transition:
         transform 0.22s cubic-bezier(0.2, 0.8, 0.3, 1),
         opacity 0.18s ease;
@@ -224,7 +224,7 @@ main {
 }
 
 #settings.settings-closed {
-    transform: translateX(16px);
+    transform: translateX(-16px);
     opacity: 0;
     visibility: hidden;
     pointer-events: none;

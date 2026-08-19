@@ -22,7 +22,7 @@ const defaults = {
     linkForce: 30,
     linkDistance: 300,
     velocityDecay: 0.4,
-    highlightColor: "#ffffff",
+    highlightColor: "#a600ff",
 };
 const FORCE_CONTROL_IDS = new Set([
     "centerForce",
@@ -77,33 +77,6 @@ function viewportSize() {
         width: Math.max(1, host.clientWidth),
         height: Math.max(1, host.clientHeight),
     };
-}
-
-function color(folder) {
-    let hash = 0;
-    for (const char of folder || "")
-        hash = char.charCodeAt(0) + ((hash << 5) - hash);
-    const hue = (Math.abs(hash) % 360) / 60;
-    const chroma = 0.56;
-    const secondary = chroma * (1 - Math.abs((hue % 2) - 1));
-    const match = 0.32;
-    const [red, green, blue] =
-        hue < 1
-            ? [chroma, secondary, 0]
-            : hue < 2
-              ? [secondary, chroma, 0]
-              : hue < 3
-                ? [0, chroma, secondary]
-                : hue < 4
-                  ? [0, secondary, chroma]
-                  : hue < 5
-                    ? [secondary, 0, chroma]
-                    : [chroma, 0, secondary];
-    return (
-        (Math.round((red + match) * 255) << 16) |
-        (Math.round((green + match) * 255) << 8) |
-        Math.round((blue + match) * 255)
-    );
 }
 
 function nodeVisible(node) {
@@ -303,9 +276,14 @@ function draw() {
             !related ||
             (related.has(edge.source.id) && related.has(edge.target.id));
         const linkAlpha = (active ? 0.6 : 0.1) * reveal;
-        const edgeColor = active ? highlightColor() : 0x7c8b98;
+        const edgeColor = related && active ? highlightColor() : 0xffffff;
         graphic.clear();
-        graphic.lineStyle(option("linkWidth") / 100, edgeColor, linkAlpha);
+        graphic.lineStyle(
+            Math.min(option("linkWidth") + (related && active ? 10 : 0), 250) /
+                100,
+            edgeColor,
+            linkAlpha,
+        );
         graphic.moveTo(edge.source.x || 0, edge.source.y || 0);
         graphic.lineTo(edge.target.x || 0, edge.target.y || 0);
         if (option("arrows")) {
@@ -338,7 +316,6 @@ function draw() {
     }
 
     const fadeCutoff = textFadeCutoff();
-    const nodeHighlight = highlightColor();
     for (const node of nodes) {
         nodeIds.add(node.id);
         const graphic = shape(nodeShapes, node.id, () => new PIXI.Graphics());
@@ -361,19 +338,8 @@ function draw() {
         const active = !related || related.has(node.id);
         const alpha = (related && !active ? 0.12 : 1) * reveal;
         graphic.clear();
-        graphic.lineStyle(
-            active ? 2 : 1,
-            active ? nodeHighlight : 0xc8bdff,
-            alpha,
-        );
-        graphic.beginFill(
-            node.missing
-                ? 0x767676
-                : active
-                  ? nodeHighlight
-                  : color(node.folder),
-            alpha,
-        );
+        graphic.lineStyle(active ? 2 : 1, 0xffffff, alpha);
+        graphic.beginFill(node.missing ? 0x767676 : 0xffffff, alpha);
         graphic.drawCircle(0, 0, radius);
         graphic.endFill();
         graphic.scale.set(reveal);
