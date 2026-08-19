@@ -213,6 +213,23 @@ class VaultIndex {
             });
         }
 
+        for (const note of this.notes) {
+            if (note.path === source.path) continue;
+            for (const target of extractTargets(note.content)) {
+                const resolved = this.resolve(note.uri, target);
+                if (resolved && resolved.path === source.path) {
+                    if (!nodes.has(note.path)) {
+                        nodes.set(note.path, nodeForNote(note));
+                    }
+                    edges.set(`${note.path}\u0000${source.path}`, {
+                        source: note.path,
+                        target: source.path,
+                    });
+                    break;
+                }
+            }
+        }
+
         return {nodes: [...nodes.values()], edges: [...edges.values()]};
     }
 
