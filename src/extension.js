@@ -1,4 +1,5 @@
 const vscode = require("vscode");
+const path = require("path");
 const {GraphPanel} = require("./graph-panel");
 const {VaultIndex} = require("./vault-index");
 const {createWikiLinkProvider} = require("./wiki-links");
@@ -18,21 +19,25 @@ function configuredVault() {
     return value ? vscode.Uri.file(value) : undefined;
 }
 
-async function isLikelyVault(uri) {
-    try {
-        const stat = await vscode.workspace.fs.stat(
-            vscode.Uri.joinPath(uri, ".obsidian"),
-        );
-        return stat.type === vscode.FileType.Directory;
-    } catch {
-        return false;
-    }
-}
-
 async function loadVault(uri) {
     const nextIndex = await VaultIndex.load(uri);
     index = nextIndex;
     return nextIndex;
+}
+
+async function isDirectory(uri) {
+    const stat = await vscode.workspace.fs.stat(uri);
+    return stat.type === vscode.FileType.Directory;
+}
+
+function isMarkdownUri(uri) {
+    return uri.fsPath.toLowerCase().endsWith(".md");
+}
+
+function watchRootFor(target) {
+    const folder = vscode.workspace.getWorkspaceFolder(target)?.uri;
+    if (folder) return folder;
+    return vscode.Uri.file(path.dirname(target.fsPath));
 }
 
 function scheduleRefresh() {
@@ -53,6 +58,28 @@ function watchVault(uri, context) {
     context.subscriptions.push(watcher);
 }
 
+async function chooseSelectionMode() {
+    const mode = await vscode.window.showQuickPick(
+        [
+            {
+                label: "Folder",
+                description: "Use all Markdown files recursively",
+                value: "folder",
+            },
+            {
+                label: "Markdown file",
+                description: "Use only first-level links from one note",
+                value: "file",
+            },
+        ],
+        {
+            title: "Select Graph Source Type",
+            placeHolder: "Choose what to graph",
+        },
+    );
+    return mode?.value;
+}
+
 async function refreshGraph() {
     if (refreshInFlight) {
         refreshQueued = true;
@@ -64,14 +91,17 @@ async function refreshGraph() {
 
     refreshInFlight = (async () => {
         try {
+            const sourceKind = (await isDirectory(vault)) ? "folder" : "file";
             const current = await loadVault(vault);
             if (!panel) return;
             const graph = current.graph();
-            console.log(`Refreshing graph with ${graph.nodes.length} nodes`);
+            console.log(
+                `Refreshing graph (${sourceKind}) ${vault.fsPath} with ${graph.nodes.length} nodes`,
+            );
             panel.postGraph(graph, vault.fsPath);
         } catch (error) {
             vscode.window.showErrorMessage(
-                `Obsidian Vault Graph could not read this vault: ${error.message}`,
+                `Obsidian Graph View could not read this vault: ${error.message}`,
             );
         } finally {
             refreshInFlight = null;
@@ -86,28 +116,39 @@ async function refreshGraph() {
 }
 
 async function chooseVault(context) {
+    const selectionMode = await chooseSelectionMode();
+    if (!selectionMode) return;
+
     const selected = await vscode.window.showOpenDialog({
-        canSelectFiles: false,
-        canSelectFolders: true,
+        canSelectFiles: selectionMode === "file",
+        canSelectFolders: selectionMode === "folder",
         canSelectMany: false,
-        openLabel: "Use as Obsidian vault",
+        filters:
+            selectionMode === "file"
+                ? {
+                      Markdown: ["md"],
+                  }
+                : undefined,
+        openLabel:
+            selectionMode === "file" ? "Use Markdown File" : "Use Folder",
     });
     if (!selected) return;
 
-    const folder = selected[0];
-    if (!(await isLikelyVault(folder))) {
+    const target = selected[0];
+    const targetIsDirectory = await isDirectory(target);
+    if (!targetIsDirectory && !isMarkdownUri(target)) {
         vscode.window.showErrorMessage(
-            "That folder does not look like an Obsidian vault. Please choose a vault folder that contains a .obsidian directory.",
+            "Please choose either a folder or a Markdown file (.md).",
         );
         return;
     }
 
     await vscode.workspace
         .getConfiguration("obsidianVaultGraph")
-        .update("vaultPath", folder.fsPath, vscode.ConfigurationTarget.Global);
-    watchVault(folder, context);
+        .update("vaultPath", target.fsPath, vscode.ConfigurationTarget.Global);
+    watchVault(watchRootFor(target), context);
     panel.show();
-    panel.postVaultStatus(folder.fsPath);
+    panel.postVaultStatus(target.fsPath);
     await refreshGraph();
 }
 
@@ -132,7 +173,7 @@ function activate(context) {
 
     const configured = configuredVault();
     if (configured) {
-        watchVault(configured, context);
+        watchVault(watchRootFor(configured), context);
         loadVault(configured).catch((error) => {
             console.warn(`Could not load configured vault: ${error.message}`);
         });
@@ -156,8 +197,7 @@ function activate(context) {
             createWikiLinkProvider(async (uri) => {
                 if (index?.contains(uri)) return index;
                 const vault = configuredVault();
-                if (!vault || !uri.fsPath.startsWith(vault.fsPath))
-                    return undefined;
+                if (!vault) return undefined;
                 try {
                     return await loadVault(vault);
                 } catch {

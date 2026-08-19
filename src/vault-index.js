@@ -55,15 +55,34 @@ async function collectMarkdownFiles(root) {
     return result;
 }
 
+function notePath(root, uri) {
+    return path.relative(root.fsPath, uri.fsPath).replace(/\\/g, "/");
+}
+
+function nodeForNote(note) {
+    return {
+        id: note.path,
+        label: path.posix.basename(note.path).replace(/\.md$/i, ""),
+        folder: path.posix.dirname(note.path.replace(/\\/g, "/")),
+        missing: false,
+    };
+}
+
 class VaultIndex {
-    static async load(root) {
+    static async load(target) {
+        const stat = await vscode.workspace.fs.stat(target);
+        if (stat.type === vscode.FileType.File) {
+            if (!target.fsPath.toLowerCase().endsWith(".md"))
+                throw new Error("Please choose a Markdown file (.md).");
+            return VaultIndex.loadFocused(target);
+        }
+
+        const root = target;
         const files = await collectMarkdownFiles(root);
         const notes = await Promise.all(
             files.map(async (uri) => ({
                 uri,
-                path: path
-                    .relative(root.fsPath, uri.fsPath)
-                    .replace(/\\/g, "/"),
+                path: notePath(root, uri),
                 content: decoder.decode(
                     await vscode.workspace.fs.readFile(uri),
                 ),
@@ -72,9 +91,30 @@ class VaultIndex {
         return new VaultIndex(root, notes);
     }
 
-    constructor(root, notes) {
+    static async loadFocused(fileUri) {
+        const workspaceFolder =
+            vscode.workspace.getWorkspaceFolder(fileUri)?.uri;
+        const root =
+            workspaceFolder || vscode.Uri.file(path.dirname(fileUri.fsPath));
+        const files = await collectMarkdownFiles(root);
+        const notes = await Promise.all(
+            files.map(async (uri) => ({
+                uri,
+                path: notePath(root, uri),
+                content: decoder.decode(
+                    await vscode.workspace.fs.readFile(uri),
+                ),
+            })),
+        );
+        return new VaultIndex(root, notes, {
+            focusedPath: notePath(root, fileUri),
+        });
+    }
+
+    constructor(root, notes, options = {}) {
         this.root = root;
         this.notes = notes;
+        this.focusedPath = options.focusedPath;
         this.byPath = new Map();
         this.byBasename = new Map();
         for (const note of notes) {
@@ -119,16 +159,10 @@ class VaultIndex {
     }
 
     graph() {
+        if (this.focusedPath) return this.focusedGraph();
+
         const nodes = new Map(
-            this.notes.map((note) => [
-                note.path,
-                {
-                    id: note.path,
-                    label: path.posix.basename(note.path).replace(/\.md$/i, ""),
-                    folder: path.posix.dirname(note.path.replace(/\\/g, "/")),
-                    missing: false,
-                },
-            ]),
+            this.notes.map((note) => [note.path, nodeForNote(note)]),
         );
         const edges = new Map();
         for (const note of this.notes)
@@ -147,6 +181,38 @@ class VaultIndex {
                     target: id,
                 });
             }
+        return {nodes: [...nodes.values()], edges: [...edges.values()]};
+    }
+
+    focusedGraph() {
+        const source = this.noteForId(this.focusedPath);
+        if (!source) return {nodes: [], edges: []};
+
+        const nodes = new Map([[source.path, nodeForNote(source)]]);
+        const edges = new Map();
+
+        for (const target of extractTargets(source.content)) {
+            const resolved = this.resolve(source.uri, target);
+            const id = resolved ? resolved.path : `missing:${target}`;
+            if (!nodes.has(id)) {
+                nodes.set(
+                    id,
+                    resolved
+                        ? nodeForNote(resolved)
+                        : {
+                              id,
+                              label: target,
+                              missing: true,
+                              folder: ".",
+                          },
+                );
+            }
+            edges.set(`${source.path}\u0000${id}`, {
+                source: source.path,
+                target: id,
+            });
+        }
+
         return {nodes: [...nodes.values()], edges: [...edges.values()]};
     }
 

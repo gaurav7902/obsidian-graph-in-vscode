@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <radialGradient id="bg-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1e1533" />
+      <stop offset="100%" stop-color="#0d1117" />
+    </radialGradient>
+
+    <!-- Obsidian Crystal Gradients -->
+    <linearGradient id="obsidian-dark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3c236e" />
+      <stop offset="100%" stop-color="#1a0f30" />
+    </linearGradient>
+
+    <linearGradient id="obsidian-mid" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#6c31c4" />
+      <stop offset="100%" stop-color="#3f187a" />
+    </linearGradient>
+
+    <linearGradient id="obsidian-light" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7b3fe4" />
+      <stop offset="100%" stop-color="#9a66ff" />
+    </linearGradient>
+
+    <!-- VS Code Ribbon Gradients -->
+    <linearGradient id="vscode-blue-1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#005ba1" />
+      <stop offset="100%" stop-color="#003a6b" />
+    </linearGradient>
+
+    <linearGradient id="vscode-blue-2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#1f9cf0" />
+      <stop offset="100%" stop-color="#007acc" />
+    </linearGradient>
+
+    <linearGradient id="vscode-blue-3" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#007acc" />
+      <stop offset="100%" stop-color="#3ea6ff" />
+    </linearGradient>
+
+    <!-- Neon Glow Filter -->
+    <filter id="core-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Background Base -->
+  <rect width="512" height="512" rx="110" fill="url(#bg-glow)" />
+
+  <!-- Outer Obsidian Crystal Facets -->
+  <g id="obsidian-base" stroke="#180e29" stroke-width="2" stroke-linejoin="round">
+    <!-- Top-Left Facet -->
+    <path d="M256 60 L140 170 L210 230 L256 120 Z" fill="url(#obsidian-mid)" />
+    <!-- Top-Right Facet -->
+    <path d="M256 60 L372 170 L302 230 L256 120 Z" fill="url(#obsidian-light)" />
+    <!-- Far-Left Wing -->
+    <path d="M140 170 L110 300 L190 350 L210 230 Z" fill="url(#obsidian-dark)" />
+    <!-- Far-Right Wing -->
+    <path d="M372 170 L402 300 L322 350 L302 230 Z" fill="url(#obsidian-mid)" />
+    <!-- Bottom-Left Facet -->
+    <path d="M110 300 L256 452 L256 370 L190 350 Z" fill="url(#obsidian-dark)" />
+    <!-- Bottom-Right Facet -->
+    <path d="M402 300 L256 452 L256 370 L322 350 Z" fill="url(#obsidian-light)" />
+  </g>
+
+  <!-- VS Code Dynamic Ribbon Integration -->
+  <g id="vscode-ribbon" filter="url(#core-glow)" stroke="#0d1117" stroke-width="1.5" stroke-linejoin="round">
+    <!-- Back Loop / Left Upper Fin -->
+    <path d="M300 130 L165 235 L125 205 L260 100 Z" fill="url(#vscode-blue-1)" />
+    
+    <!-- Back Loop / Left Lower Fin -->
+    <path d="M300 382 L165 277 L125 307 L260 412 Z" fill="url(#vscode-blue-1)" />
+    
+    <!-- Left Main Bracket -->
+    <path d="M125 205 L215 256 L125 307 L95 270 L95 242 Z" fill="url(#vscode-blue-2)" />
+    
+    <!-- Right Crossing Fold (Top to Bottom-Right) -->
+    <path d="M300 130 L387 198 L345 256 L165 235 Z" fill="url(#vscode-blue-3)" />
+    
+    <!-- Right Crossing Fold (Bottom to Top-Right) -->
+    <path d="M300 382 L387 314 L345 256 L165 277 Z" fill="url(#vscode-blue-2)" />
+    
+    <!-- Center Crystal Void / Overlap Accent -->
+    <path d="M215 256 L300 195 L345 256 L300 317 Z" fill="#4d219c" opacity="0.85" />
+    <path d="M256 210 L315 256 L256 302 L225 256 Z" fill="#007acc" opacity="0.6" />
+  </g>
+
+  <!-- Specular Highlights -->
+  <g id="highlights" fill="#ffffff" opacity="0.4">
+    <polygon points="256,60 260,118 256,120 252,118" />
+    <polygon points="372,170 302,230 308,230 376,172" />
+    <polygon points="256,452 258,370 254,370" />
+  </g>
+</svg>

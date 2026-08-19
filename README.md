@@ -1,24 +1,40 @@
-# Obsidian Vault Graph for VS Code
+# Obsidian Graph View in VSCode
 
-Open the Command Palette and run **Obsidian Vault Graph: Open Graph**, then choose an Obsidian vault folder. The extension recursively reads Markdown notes (excluding `.obsidian`, `.git`, and `node_modules`) and renders their wiki links and standard Markdown links as a force-directed, interactive graph.
+Explore Markdown note connections without leaving VS Code. This extension turns notes and their links into an interactive, force-directed graph.
 
-It follows the core behavior documented in Obsidian's Graph view: notes are circles, links are lines, notes with more connections are larger, hover highlights neighbours, and clicking a note opens it in VS Code. The settings panel supports searching, hiding unresolved files or orphans, labels, directional arrows, node/link sizing, and resetting options. Drag the background to pan, scroll to zoom, drag a note to position it, and use `+`, `-`, arrow keys, or `Home` while the graph is focused.
+## Features
 
-The extension also resolves ordinary Obsidian `[[WikiLinks]]` in any Markdown file under the selected vault. Ctrl/Cmd-click a rendered link in the VS Code editor to open the target note (including relative, folder-qualified, and unqualified links).
+- Visualize wiki links and standard Markdown links across a folder or from a single note.
+- Open a note by selecting its node in the graph.
+- Navigate `[[WikiLinks]]` directly in Markdown editors with Ctrl/Cmd-click.
+- Search the graph; hide unresolved notes or orphans; toggle labels and directional arrows.
+- Pan, zoom, drag nodes, and use `+`, `-`, arrow keys, or `Home` while the graph is focused.
+- Automatically refresh when Markdown files in the selected source change.
 
-Use **Choose Vault Folder** to switch vaults and **Refresh Graph** after changes. The selected absolute folder path is stored in the `obsidianVaultGraph.vaultPath` VS Code setting.
+## Getting started
 
-## Architecture
+1. Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`).
+2. Run **Obsidian Graph View: Open Graph View**.
+3. Choose either:
+    - a folder: all Markdown files inside it are used as graph nodes, recursively.
+    - a single Markdown file: the graph shows only that note and its first-level outgoing links.
 
-- `src/vault-index.js` scans a vault and resolves Obsidian-style links.
-- `src/wiki-links.js` provides Ctrl/Cmd-click navigation for `[[WikiLinks]]` in VS Code Markdown editors.
-- `src/graph-panel.js` owns the secure webview lifecycle and Content Security Policy.
-- `media/graph.js` is the self-contained canvas renderer: interaction, filters, and the force layout live together.
+Use **Obsidian Graph View: Choose Vault Folder** to switch source paths and **Obsidian Graph View: Refresh Graph** to refresh on demand. The selected path is stored in the `obsidianVaultGraph.vaultPath` setting.
 
-The webview does not use runtime dependencies, inline scripts, or remote resources.
+## How links are resolved
 
-Author: @gaurav7902
+The graph scans Markdown files recursively, excluding `.obsidian`, `.git`, and `node_modules`. It resolves Obsidian-style `[[WikiLinks]]` and standard Markdown links, including relative paths, folder-qualified links, and unqualified note names.
 
-## Run locally
+## Privacy
 
-Open `graph-extension-vscode` in VS Code and press `F5` to launch an Extension Development Host. This project intentionally has no runtime dependency or build step; `extension.js` is directly loaded by VS Code.
+Your vault is read locally by VS Code. The graph webview uses no remote resources, telemetry, or network requests.
+
+## Development
+
+Open this repository in VS Code and press `F5` to launch an Extension Development Host. There is no build step: `extension.js` loads the source directly.
+
+Run `npm run check` to validate JavaScript syntax, or `npm run package` to create a `.vsix` package.
+
+## Author
+
+Gaurav Patidar · [@gaurav7902](https://github.com/gaurav7902) · [Repository](https://github.com/gaurav7902/obsidian-graph-in-vscode)

@@ -1,9 +1,29 @@
 {
-    "name": "obsidian-vault-graph",
-    "displayName": "Obsidian Vault Graph",
-    "description": "Explore an Obsidian vault's Markdown links as an interactive graph.",
+    "name": "obsidian-graph-in-vscode",
+    "displayName": "Obsidian Graph View in VSCode",
+    "description": "Shows an Obsidian vault's Markdown links as an interactive graph.",
     "version": "0.1.0",
-    "publisher": "local",
+    "publisher": "GauravPatidar",
+    "author": {
+        "name": "Gaurav Patidar"
+    },
+    "license": "MIT",
+    "keywords": [
+        "obsidian",
+        "graph",
+        "graph view",
+        "knowledge graph",
+        "markdown",
+        "wiki links",
+        "notes",
+        "vault"
+    ],
+    "icon": "public/icon.png",
+    "galleryBanner": {
+        "color": "#1e1533",
+        "theme": "dark"
+    },
+    "pricing": "Free",
     "engines": {
         "vscode": "^1.85.0"
     },
@@ -18,37 +38,47 @@
         "onLanguage:markdown"
     ],
     "main": "./extension.js",
+    "scripts": {
+        "check": "node --check extension.js && node --check src/extension.js && node --check src/graph-panel.js && node --check src/vault-index.js && node --check src/wiki-links.js && node --check media/graph.js",
+        "package": "vsce package --no-dependencies",
+        "format": "prettier --write \"**/*.{ts,js,json,md}\""
+    },
     "contributes": {
         "commands": [
             {
                 "command": "obsidianVaultGraph.open",
-                "title": "Obsidian Vault Graph: Open Graph"
+                "title": "Obsidian Graph View: Open Graph View"
             },
             {
                 "command": "obsidianVaultGraph.chooseVault",
-                "title": "Obsidian Vault Graph: Choose Vault Folder"
+                "title": "Obsidian Graph View: Choose Folder or Markdown File"
             },
             {
                 "command": "obsidianVaultGraph.refresh",
-                "title": "Obsidian Vault Graph: Refresh Graph"
+                "title": "Obsidian Graph View: Refresh Graph"
             }
         ],
         "configuration": {
-            "title": "Obsidian Vault Graph",
+            "title": "Obsidian Graph View",
             "properties": {
                 "obsidianVaultGraph.vaultPath": {
                     "type": "string",
                     "default": "",
-                    "description": "Absolute path to the Obsidian vault displayed by the graph."
+                    "description": "Absolute path to the folder or Markdown file displayed by the graph."
                 }
             }
         }
     },
     "devDependencies": {
-        "@types/vscode": "^1.85.0"
+        "@types/vscode": "^1.85.0",
+        "@vscode/vsce": "^3.9.2"
     },
     "repository": {
         "type": "git",
         "url": "git+https://github.com/gaurav7902/obsidian-graph-in-vscode.git"
-    }
+    },
+    "bugs": {
+        "url": "https://github.com/gaurav7902/obsidian-graph-in-vscode/issues"
+    },
+    "homepage": "https://github.com/gaurav7902/obsidian-graph-in-vscode#readme"
 }
