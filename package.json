@@ -46,5 +46,9 @@
     },
     "devDependencies": {
         "@types/vscode": "^1.85.0"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/gaurav7902/obsidian-graph-in-vscode.git"
     }
 }
